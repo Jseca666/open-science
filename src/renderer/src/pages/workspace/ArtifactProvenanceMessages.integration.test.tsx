@@ -78,11 +78,15 @@ describe('ProvenanceMessagesTimeline integration', () => {
     expect(container.textContent).toContain('Plot a sine curve')
     expect(container.textContent).toContain('Notebook execution')
 
-    const transcriptRows = Array.from(
+    const messageRows = Array.from(
       container.querySelectorAll<HTMLElement>('[class~="pb-1"][class~="pt-5"]')
     )
-    expect(transcriptRows).toHaveLength(2)
-    for (const row of transcriptRows) {
+    const activityGroupRows = Array.from(
+      container.querySelectorAll<HTMLElement>('[class~="pb-0.5"][class~="pt-2.5"]')
+    )
+    expect(messageRows).toHaveLength(1)
+    expect(activityGroupRows).toHaveLength(1)
+    for (const row of [...messageRows, ...activityGroupRows]) {
       expect(row.classList.contains('px-0')).toBe(true)
       expect(row.classList.contains('md:px-0')).toBe(true)
       expect(row.classList.contains('px-4')).toBe(false)
