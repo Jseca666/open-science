@@ -431,7 +431,9 @@ describe('validateProvenanceMigrationState', () => {
     const scope = {
       turnMessageId: 'message-1',
       agentFrameId: 'agent-1',
-      messageBranchId: 'branch-1'
+      messageBranchId: 'branch-1',
+      blocks: [],
+      artifactVersionIds: []
     }
     await client.review.create({
       data: {
@@ -479,6 +481,16 @@ describe('validateProvenanceMigrationState', () => {
 
     await expect(validateProvenanceMigrationState(dataRoot, authorityRoot)).rejects.toThrow(
       /Review snapshot ownership is invalid/i
+    )
+
+    const reopened = createProjectDbClient(authorityRoot)
+    await reopened.review.update({
+      where: { id: 'review-1' },
+      data: { scope: JSON.stringify({ artifactVersionIds: [] }) }
+    })
+    await reopened.$disconnect()
+    await expect(validateProvenanceMigrationState(dataRoot, authorityRoot)).rejects.toThrow(
+      /Review scope is invalid/i
     )
   })
 

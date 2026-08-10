@@ -16,6 +16,7 @@ import { migrationSqlExecutor } from './migration-sql-executor'
 import { runtimeSchemaBaselineMigration } from './migrations/0001-runtime-schema-baseline'
 import { projectAgentContextMigration } from './migrations/0002-project-agent-context'
 import { grantedLocalRootsMigration } from './migrations/0003-granted-local-roots'
+import { reviewCodecVersionMigration } from './migrations/0004-review-codec-version'
 
 type MigrationVerifierDescriptor =
   | {
@@ -95,6 +96,11 @@ const GRANTED_LOCAL_ROOTS_CHECKSUM = checksumMigrationPayload(
   grantedLocalRootsMigration.statements,
   grantedLocalRootsMigration.verifiers
 )
+const REVIEW_CODEC_VERSION_CHECKSUM = checksumMigrationPayload(
+  reviewCodecVersionMigration.id,
+  reviewCodecVersionMigration.statements,
+  reviewCodecVersionMigration.verifiers
+)
 const MIGRATION_MANIFEST = [
   {
     ...runtimeSchemaBaselineMigration,
@@ -113,6 +119,13 @@ const MIGRATION_MANIFEST = [
     checksum: GRANTED_LOCAL_ROOTS_CHECKSUM,
     backupOnApply: 'required',
     backupRetention: 'retain'
+  },
+  {
+    ...reviewCodecVersionMigration,
+    checksum: REVIEW_CODEC_VERSION_CHECKSUM,
+    backupOnApply: 'required',
+    backupRetention: 'retain',
+    legacyAdoption: 'accept-current-schema'
   }
 ] as const satisfies readonly MigrationManifestEntry[]
 // schema-locality: begin frozen-0001-repairs
@@ -187,6 +200,7 @@ type MigrationManifestEntry = {
   verifiers: MigrationVerifiers
   backupOnApply: 'required' | 'none'
   backupRetention: 'retain' | 'delete-after-success'
+  legacyAdoption?: 'accept-current-schema'
 }
 
 const runMigrationVerifiers = async (
@@ -646,11 +660,21 @@ const applyBaselineMigration = async (
 
 const applyManifestMigration = async (
   client: PrismaClient,
-  migration: MigrationManifestEntry
+  migration: MigrationManifestEntry,
+  adoptedLegacy: boolean
 ): Promise<void> => {
   try {
     await client.$transaction(async (transaction) => {
       const transactionClient = transaction as unknown as PrismaClient
+      if (adoptedLegacy && migration.legacyAdoption === 'accept-current-schema') {
+        try {
+          await verifyCurrentRuntimeSchema(transactionClient)
+          await insertLedgerRow(transactionClient, migration)
+          return
+        } catch (error) {
+          if (!(error instanceof DatabaseValidationError)) throw error
+        }
+      }
       for (const statement of migration.statements) {
         await migrationSqlExecutor.execute(transaction, statement)
       }
@@ -776,7 +800,7 @@ const migrateApplicationDatabaseWithManifest = async (
   for (const migration of manifest.slice(nextIndex)) {
     options.onProgress?.({ phase: 'migrating', migrationId: migration.id })
     await backupBeforeMigration(migration)
-    await applyManifestMigration(client, migration)
+    await applyManifestMigration(client, migration, adoptedLegacy)
     applied.push(migration.id)
   }
 
@@ -792,6 +816,7 @@ const migrateApplicationDatabase = (
 export {
   BASELINE_CHECKSUM,
   PROJECT_AGENT_CONTEXT_CHECKSUM,
+  REVIEW_CODEC_VERSION_CHECKSUM,
   DatabaseMigrationError,
   checksumMigrationPayload,
   classifyDatabaseFailure,

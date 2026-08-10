@@ -319,6 +319,7 @@ describe('Reviewer orchestrator architecture', () => {
   it('keeps orchestration metadata out of the Reviewer persistence leaf', () => {
     expect(prismaModelFields('Review')).toEqual([
       'id String @id @default(cuid())',
+      'codecVersion Int @default(0)',
       'projectId String',
       'sessionId String',
       'turnMessageId String',

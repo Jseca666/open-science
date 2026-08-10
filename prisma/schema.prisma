@@ -109,6 +109,7 @@ model NotificationInboxItem {
 // as JSON array of ReviewerLogEntry). submit_findings no longer accepts `reasoning`.
 model Review {
   id            String    @id @default(cuid())
+  codecVersion  Int       @default(0)
   projectId     String
   sessionId     String
   turnMessageId String

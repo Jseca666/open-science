@@ -1638,6 +1638,18 @@ describe('artifact provenance repository', () => {
           reviewerLog: '[]',
           createdAt: new Date('2026-07-27T10:01:00Z'),
           updatedAt: new Date('2026-07-27T10:01:00Z')
+        },
+        {
+          id: 'review-corrupt-json',
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          turnMessageId: 'prompt-1',
+          scope: 'null',
+          lifecycle: 'complete',
+          outcome: 'pass',
+          reviewerLog: '42',
+          createdAt: new Date('2026-07-27T10:02:00Z'),
+          updatedAt: new Date('2026-07-27T10:02:00Z')
         }
       ]
     })
@@ -1648,6 +1660,18 @@ describe('artifact provenance repository', () => {
         status: 'pass',
         claim: 'Artifact values match the execution output.',
         evidence: 'Recomputed from the immutable Artifact Version.',
+        artifactVersionId: version.versionId,
+        artifactBindingState: 'scope_validated'
+      }
+    })
+    await client.finding.create({
+      data: {
+        id: 'finding-corrupt-locator',
+        reviewId: 'review-corrupt-json',
+        status: 'fail',
+        claim: 'Persisted locator is corrupt.',
+        evidence: 'The containing Review must not break the Provenance read.',
+        locator: 'null',
         artifactVersionId: version.versionId,
         artifactBindingState: 'scope_validated'
       }
@@ -1668,7 +1692,7 @@ describe('artifact provenance repository', () => {
         value: {
           binding: 'version',
           currentDirectAssessment: { id: 'review-direct-pass', outcome: 'pass' },
-          latestChainReview: { id: 'review-direct-pass', outcome: 'pass' },
+          latestChainReview: { id: 'review-corrupt-json', lifecycle: 'error', outcome: null },
           selectedVersionChecks: [{ artifactBindingState: 'scope_validated' }]
         }
       }

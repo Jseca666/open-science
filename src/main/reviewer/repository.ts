@@ -2,12 +2,16 @@ import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, relative, resolve, sep } from 'node:path'
 
-import type { Finding as PrismaFinding, PrismaClient, Review as PrismaReview } from '@prisma/client'
+import type {
+  Finding as PrismaFinding,
+  PrismaClient,
+  Review as PrismaReview,
+  ReviewFindingDisposition as PrismaReviewFindingDisposition
+} from '@prisma/client'
 
 import type {
   CheckStatus,
   CreateReviewInput,
-  FindingLocator,
   FindingResolution,
   NewCheck,
   Review,
@@ -16,12 +20,11 @@ import type {
   ReviewFindingDispositionOutcome,
   ReviewFindingDispositionTrigger,
   ReviewerLogEntry,
-  ReviewLifecycle,
   ReviewOutcome,
   ReviewWithChecks,
-  TurnScope,
   UpdateReviewPatch
 } from '../../shared/reviewer'
+import { reviewPersistenceCodec } from './persistence-codec'
 
 // Legacy alias for callers still using FindingSeverity (now CheckStatus).
 type FindingSeverity = CheckStatus
@@ -91,100 +94,14 @@ const touchReview = async (tx: Pick<PrismaClient, 'review'>, reviewId: string): 
   await tx.review.update({ where: { id: reviewId }, data: { updatedAt: new Date() } })
 }
 
-// JSON columns are parsed defensively: a corrupt value degrades to the given fallback rather than
-// throwing, so one bad row cannot break loading a whole session's reviews.
-const parseJson = <T>(value: string, fallback: T): T => {
-  try {
-    return JSON.parse(value) as T
-  } catch {
-    return fallback
-  }
-}
+const toReview = (row: PrismaReview): Review => reviewPersistenceCodec.decodeReview(row)
 
-const EMPTY_SCOPE = (turnMessageId: string): TurnScope => ({
-  turnMessageId,
-  blocks: [],
-  artifactVersionIds: []
-})
+const toCheck = (row: PrismaFinding, codecVersion?: number): ReviewCheck =>
+  reviewPersistenceCodec.decodeFinding(row, codecVersion)
 
-// Narrows the free-text lifecycle column back to the domain union, defaulting unknown values to 'error'
-// so a corrupt row surfaces as a failed review rather than a phantom running one.
-const asLifecycle = (value: string): ReviewLifecycle =>
-  value === 'running' || value === 'complete' ? value : 'error'
-
-const asOutcome = (value: string | null): ReviewOutcome | null =>
-  value === 'pass' || value === 'flagged' ? value : null
-
-// Maps a Prisma review row (JSON strings + DateTime) into the epoch-ms domain shape shared with the renderer.
-// v2: Review no longer has summary/checks columns; those are gone.
-// v3: reasoning replaced by reviewerLog (captured action stream).
-const toReview = (row: PrismaReview): Review => ({
-  id: row.id,
-  projectId: row.projectId,
-  sessionId: row.sessionId,
-  turnMessageId: row.turnMessageId,
-  scope: parseJson<TurnScope>(row.scope, EMPTY_SCOPE(row.turnMessageId)),
-  lifecycle: asLifecycle(row.lifecycle),
-  outcome: asOutcome(row.outcome),
-  errorMessage: row.errorMessage ?? undefined,
-  model: row.model,
-  reviewerLog: parseJson<ReviewerLogEntry[]>(row.reviewerLog, []),
-  createdAt: row.createdAt.getTime(),
-  updatedAt: row.updatedAt.getTime()
-})
-
-// Maps a Prisma Finding row to the unified ReviewCheck domain type.
-// v2: `status` replaces `severity`; locator is optional (pass checks may have empty JSON = {}).
-const asCheckStatus = (value: string): CheckStatus => {
-  if (value === 'fail' || value === 'warn' || value === 'pass') return value
-  // Legacy migration: old 'severity' values were only warn/fail, default to 'warn' if unknown.
-  if (value === 'inconclusive') return 'warn'
-  return 'warn'
-}
-
-const toCheck = (row: PrismaFinding): ReviewCheck => {
-  const locatorRaw = parseJson<FindingLocator | Record<string, never>>(row.locator, {})
-  // A locator is meaningful only when it has a blockRef (pass checks may store '{}').
-  const hasLocator = 'blockRef' in locatorRaw && locatorRaw.blockRef !== undefined
-  return {
-    id: row.id,
-    reviewId: row.reviewId,
-    status: asCheckStatus(row.status),
-    resolution:
-      row.resolution === 'resolved' || row.resolution === 'unaddressed' ? row.resolution : 'open',
-    claim: row.claim,
-    evidence: row.evidence,
-    locator: hasLocator ? (locatorRaw as FindingLocator) : undefined,
-    artifactVersionId: row.artifactVersionId ?? undefined,
-    artifactBindingState:
-      row.artifactBindingState === 'scope_validated' ? 'scope_validated' : 'legacy_unverified',
-    sortIndex: row.sortIndex,
-    // Default to 0 for rows written before the reflagCount column was added (issue 15 migration guard).
-    reflagCount: row.reflagCount ?? 0
-  }
-}
-
-const toFindingDisposition = (row: {
-  id: string
-  sourceFindingId: string
-  causeReviewId: string | null
-  sequence: number
-  trigger: string
-  outcome: string
-  note: string | null
-  assessedArtifactVersionId: string | null
-  createdAt: Date
-}): ReviewFindingDisposition => ({
-  id: row.id,
-  sourceFindingId: row.sourceFindingId,
-  causeReviewId: row.causeReviewId ?? undefined,
-  sequence: row.sequence,
-  trigger: row.trigger as ReviewFindingDispositionTrigger,
-  outcome: row.outcome as ReviewFindingDispositionOutcome,
-  note: row.note ?? undefined,
-  assessedArtifactVersionId: row.assessedArtifactVersionId ?? undefined,
-  createdAt: row.createdAt.getTime()
-})
+const toFindingDisposition = (
+  row: PrismaReviewFindingDisposition
+): ReviewFindingDisposition | undefined => reviewPersistenceCodec.decodeDisposition(row)
 
 // Owns Review/check reads/writes. The client is resolved lazily per call so schema-ensure failures can
 // recover (see projects/repository.ts). Reviews live in SQLite while the transcript stays in session JSON;
@@ -198,17 +115,13 @@ class ReviewRepository {
   // Inserts a new review, defaulting a fresh audit to the 'running' lifecycle with no outcome yet.
   async createReview(input: CreateReviewInput): Promise<Review> {
     const client = await this.getClient()
+    const encoded = reviewPersistenceCodec.encodeReview(input)
     const row = await client.review.create({
       data: {
         projectId: input.projectId,
         sessionId: input.sessionId,
         turnMessageId: input.turnMessageId,
-        scope: JSON.stringify(input.scope),
-        lifecycle: input.lifecycle ?? 'running',
-        outcome: input.outcome ?? null,
-        errorMessage: input.errorMessage ?? null,
-        model: input.model ?? '',
-        reviewerLog: JSON.stringify(input.reviewerLog ?? [])
+        ...encoded
       }
     })
 
@@ -219,11 +132,11 @@ class ReviewRepository {
         await client.review
           .update({
             where: { id: row.id },
-            data: {
+            data: reviewPersistenceCodec.encodeReviewPatch({
               lifecycle: 'error',
               outcome: null,
               errorMessage: error instanceof Error ? error.message : String(error)
-            }
+            })
           })
           .catch(() => undefined)
         throw error
@@ -302,17 +215,11 @@ class ReviewRepository {
 
   // Patches only the provided fields so a caller can flip lifecycle/outcome without resupplying the rest.
   async updateReview(id: string, patch: UpdateReviewPatch): Promise<Review> {
-    const data: Record<string, unknown> = {}
-
-    if (patch.scope !== undefined) data.scope = JSON.stringify(patch.scope)
-    if (patch.lifecycle !== undefined) data.lifecycle = patch.lifecycle
-    if (patch.outcome !== undefined) data.outcome = patch.outcome
-    if (patch.errorMessage !== undefined) data.errorMessage = patch.errorMessage
-    if (patch.model !== undefined) data.model = patch.model
-    if (patch.reviewerLog !== undefined) data.reviewerLog = JSON.stringify(patch.reviewerLog)
-
     const client = await this.getClient()
-    const row = await client.review.update({ where: { id }, data })
+    const row = await client.review.update({
+      where: { id },
+      data: reviewPersistenceCodec.encodeReviewPatch(patch)
+    })
 
     return toReview(row)
   }
@@ -326,7 +233,7 @@ class ReviewRepository {
     await client.$transaction(async (tx) => {
       const review = await tx.review.findUnique({ where: { id: reviewId } })
       if (!review) throw new Error(`Review not found: ${reviewId}`)
-      const scope = parseJson<TurnScope>(review.scope, EMPTY_SCOPE(review.turnMessageId))
+      const scope = reviewPersistenceCodec.decodeReview(review).scope
       for (const check of checks) {
         if (
           check.artifactVersionId &&
@@ -340,14 +247,7 @@ class ReviewRepository {
       await tx.finding.createMany({
         data: checks.map((check, index) => ({
           reviewId,
-          status: check.status,
-          resolution: check.resolution ?? 'open',
-          claim: check.claim,
-          evidence: check.evidence,
-          locator: JSON.stringify(check.locator ?? {}),
-          artifactVersionId: check.artifactVersionId ?? null,
-          artifactBindingState: check.artifactVersionId ? 'scope_validated' : 'legacy_unverified',
-          sortIndex: check.sortIndex ?? index
+          ...reviewPersistenceCodec.encodeFinding(check, index)
         }))
       })
       await touchReview(tx, reviewId)
@@ -394,10 +294,7 @@ class ReviewRepository {
       if (assessmentReview.lifecycle !== 'running') {
         throw new Error(`Review submission is already terminal: ${input.reviewId}`)
       }
-      const assessmentScope = parseJson<TurnScope>(
-        assessmentReview.scope,
-        EMPTY_SCOPE(assessmentReview.turnMessageId)
-      )
+      const assessmentScope = reviewPersistenceCodec.decodeReview(assessmentReview).scope
       for (const check of input.checks) {
         if (
           check.artifactVersionId &&
@@ -414,14 +311,7 @@ class ReviewRepository {
         await tx.finding.createMany({
           data: newChecks.map((check, index) => ({
             reviewId: input.reviewId,
-            status: check.status,
-            resolution: check.resolution ?? 'open',
-            claim: check.claim,
-            evidence: check.evidence,
-            locator: JSON.stringify(check.locator ?? {}),
-            artifactVersionId: check.artifactVersionId ?? null,
-            artifactBindingState: check.artifactVersionId ? 'scope_validated' : 'legacy_unverified',
-            sortIndex: check.sortIndex ?? index
+            ...reviewPersistenceCodec.encodeFinding(check, index)
           }))
         })
       }
@@ -486,8 +376,7 @@ class ReviewRepository {
             sourceFindingId: finding.id,
             causeReviewId: assessmentReview.id,
             sequence: (latest?.sequence ?? 0) + 1,
-            trigger: 'review_submission',
-            outcome: dispositionOutcome,
+            ...reviewPersistenceCodec.encodeDisposition('review_submission', dispositionOutcome),
             assessedArtifactVersionId: check.artifactVersionId ?? null
           }
         })
@@ -499,12 +388,12 @@ class ReviewRepository {
       }
       await tx.review.update({
         where: { id: assessmentReview.id },
-        data: {
+        data: reviewPersistenceCodec.encodeReviewPatch({
           lifecycle: 'complete',
           outcome: input.outcome,
           errorMessage: null,
-          reviewerLog: JSON.stringify(input.reviewerLog ?? [])
-        }
+          reviewerLog: input.reviewerLog ?? []
+        })
       })
       return { projectId: assessmentReview.projectId, sessionId: assessmentReview.sessionId }
     })
@@ -552,7 +441,7 @@ class ReviewRepository {
           orderBy: { sortIndex: 'asc' }
         })
 
-        const checks = checkRows.map(toCheck)
+        const checks = checkRows.map((checkRow) => toCheck(checkRow, row.codecVersion))
         return {
           ...toReview(row),
           checks,
@@ -640,6 +529,10 @@ class ReviewRepository {
     note?: string
     assessedArtifactVersionId?: string
   }): Promise<ReviewFindingDisposition> {
+    const encodedDisposition = reviewPersistenceCodec.encodeDisposition(
+      input.trigger,
+      input.outcome
+    )
     const client = await this.getClient()
     const row = await client.$transaction(async (tx) => {
       const existing = await tx.reviewFindingDisposition.findUnique({
@@ -671,24 +564,15 @@ class ReviewRepository {
           sourceFindingId: input.sourceFindingId,
           causeReviewId: input.causeReviewId ?? null,
           sequence: (latest?.sequence ?? 0) + 1,
-          trigger: input.trigger,
-          outcome: input.outcome,
+          ...encodedDisposition,
           note: input.note ?? null,
           assessedArtifactVersionId: input.assessedArtifactVersionId ?? null
         }
       })
     })
-    return {
-      id: row.id,
-      sourceFindingId: row.sourceFindingId,
-      causeReviewId: row.causeReviewId ?? undefined,
-      sequence: row.sequence,
-      trigger: row.trigger as ReviewFindingDispositionTrigger,
-      outcome: row.outcome as ReviewFindingDispositionOutcome,
-      note: row.note ?? undefined,
-      assessedArtifactVersionId: row.assessedArtifactVersionId ?? undefined,
-      createdAt: row.createdAt.getTime()
-    }
+    const decoded = reviewPersistenceCodec.decodeDisposition(row)
+    if (!decoded) throw new Error(`Stored Finding disposition is invalid: ${row.id}`)
+    return decoded
   }
 
   // Applies the fix-loop materialized state and appends its immutable audit event in one SQLite
@@ -720,9 +604,13 @@ class ReviewRepository {
 
     const client = await this.getClient()
     const rows = await client.$transaction(async (tx) => {
-      const dispositions: Array<Parameters<typeof toFindingDisposition>[0]> = []
+      const dispositions: PrismaReviewFindingDisposition[] = []
       const reviewIds = new Set<string>()
       for (const input of inputs) {
+        const encodedDisposition = reviewPersistenceCodec.encodeDisposition(
+          input.trigger,
+          input.outcome
+        )
         const finding = await tx.finding.findFirst({
           where: { id: input.sourceFindingId, reviewId: input.reviewId }
         })
@@ -744,10 +632,7 @@ class ReviewRepository {
           throw new Error('Finding disposition Review belongs to another Project or Session.')
         }
         if (input.assessedArtifactVersionId) {
-          const assessmentScope = parseJson<TurnScope>(
-            assessmentReview.scope,
-            EMPTY_SCOPE(assessmentReview.turnMessageId)
-          )
+          const assessmentScope = reviewPersistenceCodec.decodeReview(assessmentReview).scope
           if (!assessmentScope.artifactVersionIds.includes(input.assessedArtifactVersionId)) {
             throw new Error(
               `Assessed Artifact Version is outside Review scope: ${input.assessedArtifactVersionId}`
@@ -800,8 +685,7 @@ class ReviewRepository {
               sourceFindingId: finding.id,
               causeReviewId: input.causeReviewId ?? null,
               sequence: (latest?.sequence ?? 0) + 1,
-              trigger: input.trigger,
-              outcome: input.outcome,
+              ...encodedDisposition,
               note: input.note ?? null,
               assessedArtifactVersionId: input.assessedArtifactVersionId ?? null
             }
@@ -812,7 +696,10 @@ class ReviewRepository {
       for (const reviewId of reviewIds) await touchReview(tx, reviewId)
       return dispositions
     })
-    return rows.map(toFindingDisposition)
+    return rows.flatMap((row) => {
+      const decoded = toFindingDisposition(row)
+      return decoded ? [decoded] : []
+    })
   }
 
   async getFindingDispositions(sourceFindingId: string): Promise<ReviewFindingDisposition[]> {
@@ -821,7 +708,10 @@ class ReviewRepository {
       where: { sourceFindingId },
       orderBy: { sequence: 'asc' }
     })
-    return rows.map(toFindingDisposition)
+    return rows.flatMap((row) => {
+      const decoded = toFindingDisposition(row)
+      return decoded ? [decoded] : []
+    })
   }
 
   // Test/diagnostic helper: total check rows, used to assert no orphans survive a cascade delete.
@@ -848,7 +738,7 @@ class ReviewRepository {
   }
 }
 
-export { ReviewRepository, toCheck, toReview }
+export { ReviewRepository, toCheck, toFindingDisposition, toReview }
 export type { ReviewClient, ReviewClientProvider, ReviewRepositoryOptions, FindingSeverity }
 
 // Legacy exports kept for callers that still reference toFinding.

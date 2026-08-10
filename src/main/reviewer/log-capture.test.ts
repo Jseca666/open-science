@@ -523,13 +523,12 @@ describe('ReviewRepository — reviewerLog round-trip', () => {
     await client.$disconnect()
   })
 
-  it('tolerates legacy/unknown entry kinds in the persisted JSON without throwing', async () => {
+  it('migrates legacy tool entries and isolates unknown persisted log kinds', async () => {
     const client = createProjectDbClient(temporaryRoot!)
     await migrateApplicationDatabase(client)
     const repository = new ReviewRepository(() => Promise.resolve(client))
 
     // Simulate a legacy log that still uses the old tool_call/tool_result split (or unknown kind).
-    // The repository parses defensively; unknown kinds should be returned as-is (no crash).
     const legacyLog = [
       { kind: 'thought', text: 'old thought' },
       { kind: 'tool_call', toolName: 'read_turn', title: 'read_turn()' }, // legacy
@@ -551,11 +550,18 @@ describe('ReviewRepository — reviewerLog round-trip', () => {
       }
     })
 
-    // Must not throw on reload.
     const reviews = await repository.getReviewsForSession('session-legacy')
     expect(reviews).toHaveLength(1)
-    // The legacy entries are returned as-is (parseJson just returns the raw array).
-    expect(reviews[0]?.reviewerLog).toHaveLength(4)
+    expect(reviews[0]?.reviewerLog).toEqual([
+      { kind: 'thought', text: 'old thought' },
+      {
+        kind: 'tool',
+        toolName: 'read_turn',
+        title: 'read_turn()',
+        rawOutput: '[...]',
+        status: 'ok'
+      }
+    ])
 
     await client.$disconnect()
   })

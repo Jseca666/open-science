@@ -64,6 +64,7 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
 );`,
   `CREATE TABLE IF NOT EXISTS "Review" (
     "id" TEXT NOT NULL PRIMARY KEY,
+    "codecVersion" INTEGER NOT NULL DEFAULT 0,
     "projectId" TEXT NOT NULL,
     "sessionId" TEXT NOT NULL,
     "turnMessageId" TEXT NOT NULL,

@@ -11,6 +11,7 @@ import {
   BASELINE_CHECKSUM,
   MIGRATION_MANIFEST,
   PROJECT_AGENT_CONTEXT_CHECKSUM,
+  REVIEW_CODEC_VERSION_CHECKSUM,
   checksumMigrationPayload,
   classifyDatabaseFailure,
   migrateApplicationDatabase,
@@ -19,7 +20,7 @@ import {
 } from './migration-service'
 
 const futureTestMigration = (): MigrationManifestEntry => {
-  const id = '0004_test_suffix'
+  const id = '0005_test_suffix'
   const statements = [`UPDATE "Project" SET "name" = "name" WHERE 0`] as const
   const verifiers = [{ kind: 'table-exists', version: 1, table: 'Project' }] as const
   return {
@@ -140,6 +141,9 @@ describe('application database migrations', () => {
     expect(PROJECT_AGENT_CONTEXT_CHECKSUM).toBe(
       'f3b29cf4543d1739a0cd211ddea172dcfd18aa9d7c8f94d520913ab88cb977c6'
     )
+    expect(REVIEW_CODEC_VERSION_CHECKSUM).toBe(
+      '55c571e13247a3cfdb5bda7b7469fb688aad787214732271581cad2fa1fd7298'
+    )
     const verifier = [{ kind: 'table-exists', version: 1, table: 'probe' }] as const
     expect(checksumMigrationPayload('0001_test', ['one\r\ntwo'], verifier)).toBe(
       checksumMigrationPayload('0001_test', ['one\ntwo'], verifier)
@@ -173,10 +177,11 @@ describe('application database migrations', () => {
       applied: [
         '0001_runtime_schema_baseline',
         '0002_project_agent_context',
-        '0003_granted_local_roots'
+        '0003_granted_local_roots',
+        '0004_review_codec_version'
       ],
       from: null,
-      to: '0003_granted_local_roots'
+      to: '0004_review_codec_version'
     })
     expect(compatibility).toEqual([{ sqliteVersion: expect.stringMatching(/^\d+\.\d+\.\d+$/) }])
     await expect(
@@ -189,8 +194,8 @@ describe('application database migrations', () => {
     await expect(migrateApplicationDatabase(client)).resolves.toEqual({
       adoptedLegacy: false,
       applied: [],
-      from: '0003_granted_local_roots',
-      to: '0003_granted_local_roots'
+      from: '0004_review_codec_version',
+      to: '0004_review_codec_version'
     })
   })
 
@@ -234,7 +239,7 @@ describe('application database migrations', () => {
       })
     ).rejects.toMatchObject({
       code: 'database_validation_failed',
-      migrationId: '0003_granted_local_roots'
+      migrationId: '0004_review_codec_version'
     })
     expect(retired).toEqual([])
     await expect(access(backupPath)).resolves.toBeUndefined()
@@ -250,9 +255,9 @@ describe('application database migrations', () => {
       migrateApplicationDatabaseWithManifest(client, [...MIGRATION_MANIFEST, future])
     ).resolves.toEqual({
       adoptedLegacy: false,
-      applied: ['0004_test_suffix'],
-      from: '0003_granted_local_roots',
-      to: '0004_test_suffix'
+      applied: ['0005_test_suffix'],
+      from: '0004_review_codec_version',
+      to: '0005_test_suffix'
     })
     await expect(
       client.$queryRaw<Array<{ id: string }>>`
@@ -262,7 +267,8 @@ describe('application database migrations', () => {
       { id: '0001_runtime_schema_baseline' },
       { id: '0002_project_agent_context' },
       { id: '0003_granted_local_roots' },
-      { id: '0004_test_suffix' }
+      { id: '0004_review_codec_version' },
+      { id: '0005_test_suffix' }
     ])
   })
 
@@ -285,10 +291,11 @@ describe('application database migrations', () => {
     expect(backupEvents).toEqual([])
   })
 
-  it('retains a recovery snapshot before adding Agent Context to a ledger database', async () => {
+  it('backs up each pending schema migration and preserves legacy Review codec semantics', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-database-agent-context-backup-'))
     const databasePath = join(storageRoot, 'open-science.db')
-    const backupPath = `${databasePath}.before-0002_project_agent_context.backup`
+    const agentContextBackupPath = `${databasePath}.before-0002_project_agent_context.backup`
+    const reviewCodecBackupPath = `${databasePath}.before-0004_review_codec_version.backup`
     const backupEvents: unknown[] = []
     client = createProjectDbClient(storageRoot)
     for (const statement of MIGRATION_MANIFEST[0]!.statements) {
@@ -307,6 +314,10 @@ describe('application database migrations', () => {
       INSERT INTO "Project" ("id", "name", "updatedAt")
       VALUES (${'project-1'}, ${'Preserved'}, ${new Date('2026-01-02T03:04:05Z')})
     `
+    await client.$executeRaw`
+      INSERT INTO "Review" ("id", "projectId", "sessionId", "turnMessageId", "updatedAt")
+      VALUES (${'review-1'}, ${'project-1'}, ${'session-1'}, ${'message-1'}, ${new Date('2026-01-02T03:04:05Z')})
+    `
 
     await expect(
       migrateApplicationDatabase(client, {
@@ -315,28 +326,43 @@ describe('application database migrations', () => {
       })
     ).resolves.toEqual({
       adoptedLegacy: false,
-      applied: ['0002_project_agent_context', '0003_granted_local_roots'],
+      applied: [
+        '0002_project_agent_context',
+        '0003_granted_local_roots',
+        '0004_review_codec_version'
+      ],
       from: '0001_runtime_schema_baseline',
-      to: '0003_granted_local_roots'
+      to: '0004_review_codec_version'
     })
     expect(backupEvents).toEqual([
       {
         migrationId: '0002_project_agent_context',
-        path: backupPath,
+        path: agentContextBackupPath,
         reused: false
       },
       {
         migrationId: '0003_granted_local_roots',
         path: `${databasePath}.before-0003_granted_local_roots.backup`,
         reused: false
+      },
+      {
+        migrationId: '0004_review_codec_version',
+        path: reviewCodecBackupPath,
+        reused: false
       }
     ])
-    await expect(access(backupPath)).resolves.toBeUndefined()
+    await expect(access(agentContextBackupPath)).resolves.toBeUndefined()
+    await expect(access(reviewCodecBackupPath)).resolves.toBeUndefined()
     await expect(
       client.$queryRaw<Array<{ agentContext: string; name: string }>>`
         SELECT "agentContext", "name" FROM "Project" WHERE "id" = 'project-1'
       `
     ).resolves.toEqual([{ agentContext: '', name: 'Preserved' }])
+    await expect(
+      client.$queryRaw<Array<{ codecVersion: number }>>`
+        SELECT "codecVersion" FROM "Review" WHERE "id" = 'review-1'
+      `
+    ).resolves.toEqual([{ codecVersion: 0 }])
   })
 
   it('rolls back a future migration and its ledger row when verification fails', async () => {
@@ -361,7 +387,7 @@ describe('application database migrations', () => {
       migrateApplicationDatabaseWithManifest(client, [...MIGRATION_MANIFEST, future])
     ).rejects.toMatchObject({
       code: 'database_validation_failed',
-      migrationId: '0004_test_suffix'
+      migrationId: '0005_test_suffix'
     })
     await expect(
       client.$queryRaw<Array<{ name: string }>>`
@@ -376,7 +402,8 @@ describe('application database migrations', () => {
     ).resolves.toEqual([
       { id: '0001_runtime_schema_baseline' },
       { id: '0002_project_agent_context' },
-      { id: '0003_granted_local_roots' }
+      { id: '0003_granted_local_roots' },
+      { id: '0004_review_codec_version' }
     ])
   })
 
@@ -398,7 +425,7 @@ describe('application database migrations', () => {
       migrateApplicationDatabaseWithManifest(client, [...MIGRATION_MANIFEST, future])
     ).rejects.toMatchObject({
       code: 'database_validation_failed',
-      migrationId: '0004_test_suffix'
+      migrationId: '0005_test_suffix'
     })
   })
 
@@ -427,9 +454,10 @@ describe('application database migrations', () => {
         '0001_runtime_schema_baseline',
         '0002_project_agent_context',
         '0003_granted_local_roots',
-        '0004_test_suffix'
+        '0004_review_codec_version',
+        '0005_test_suffix'
       ],
-      to: '0004_test_suffix'
+      to: '0005_test_suffix'
     })
     await expect(
       client.project.findUniqueOrThrow({ where: { id: 'legacy-project' } })
@@ -443,7 +471,7 @@ describe('application database migrations', () => {
     await client.project.create({ data: { id: 'project-1', name: 'Preserved' } })
     await client.$executeRaw`
       INSERT INTO "_open_science_migrations" ("id", "checksum")
-      VALUES (${'0004_future_schema'}, ${'f'.repeat(64)})
+      VALUES (${'0005_future_schema'}, ${'f'.repeat(64)})
     `
 
     await expect(migrateApplicationDatabase(client)).rejects.toMatchObject({
@@ -514,7 +542,8 @@ describe('application database migrations', () => {
       applied: [
         '0001_runtime_schema_baseline',
         '0002_project_agent_context',
-        '0003_granted_local_roots'
+        '0003_granted_local_roots',
+        '0004_review_codec_version'
       ]
     })
     await expect(
@@ -553,7 +582,8 @@ describe('application database migrations', () => {
       applied: [
         '0001_runtime_schema_baseline',
         '0002_project_agent_context',
-        '0003_granted_local_roots'
+        '0003_granted_local_roots',
+        '0004_review_codec_version'
       ]
     })
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({ applied: [] })
@@ -605,7 +635,8 @@ describe('application database migrations', () => {
       applied: [
         '0001_runtime_schema_baseline',
         '0002_project_agent_context',
-        '0003_granted_local_roots'
+        '0003_granted_local_roots',
+        '0004_review_codec_version'
       ]
     })
     await expect(
@@ -660,7 +691,8 @@ describe('application database migrations', () => {
       applied: [
         '0001_runtime_schema_baseline',
         '0002_project_agent_context',
-        '0003_granted_local_roots'
+        '0003_granted_local_roots',
+        '0004_review_codec_version'
       ]
     })
     await expect(verifyCurrentRuntimeSchema(client)).resolves.toBeUndefined()
@@ -749,7 +781,8 @@ describe('application database migrations', () => {
       applied: [
         '0001_runtime_schema_baseline',
         '0002_project_agent_context',
-        '0003_granted_local_roots'
+        '0003_granted_local_roots',
+        '0004_review_codec_version'
       ]
     })
     await expect(
@@ -763,6 +796,7 @@ describe('application database migrations', () => {
     const databasePath = join(storageRoot, 'open-science.db')
     const backupPath = `${databasePath}.before-0001_runtime_schema_baseline.backup`
     const agentContextBackupPath = `${databasePath}.before-0002_project_agent_context.backup`
+    const reviewCodecBackupPath = `${databasePath}.before-0004_review_codec_version.backup`
     const backupEvents: unknown[] = []
     client = createProjectDbClient(storageRoot)
     await client.$executeRawUnsafe(`CREATE TABLE "Project" (
@@ -791,7 +825,8 @@ describe('application database migrations', () => {
       applied: [
         '0001_runtime_schema_baseline',
         '0002_project_agent_context',
-        '0003_granted_local_roots'
+        '0003_granted_local_roots',
+        '0004_review_codec_version'
       ]
     })
     expect(backupEvents).toEqual([
@@ -809,9 +844,15 @@ describe('application database migrations', () => {
         migrationId: '0003_granted_local_roots',
         path: `${databasePath}.before-0003_granted_local_roots.backup`,
         reused: false
+      },
+      {
+        migrationId: '0004_review_codec_version',
+        path: reviewCodecBackupPath,
+        reused: false
       }
     ])
     await expect(access(agentContextBackupPath)).resolves.toBeUndefined()
+    await expect(access(reviewCodecBackupPath)).resolves.toBeUndefined()
     await expect(client.project.count()).resolves.toBe(1)
 
     const backupClient = new PrismaClient({
@@ -1149,6 +1190,7 @@ describe('application database migrations', () => {
     const databasePath = join(storageRoot, 'open-science.db')
     const backupPath = `${databasePath}.before-0001_runtime_schema_baseline.backup`
     const agentContextBackupPath = `${databasePath}.before-0002_project_agent_context.backup`
+    const reviewCodecBackupPath = `${databasePath}.before-0004_review_codec_version.backup`
     client = createProjectDbClient(storageRoot)
     await client.$executeRawUnsafe(`CREATE TABLE "Project" (
       "id" TEXT NOT NULL PRIMARY KEY,
@@ -1191,6 +1233,11 @@ describe('application database migrations', () => {
         migrationId: '0003_granted_local_roots',
         path: `${databasePath}.before-0003_granted_local_roots.backup`,
         reused: false
+      }),
+      expect.objectContaining({
+        migrationId: '0004_review_codec_version',
+        path: reviewCodecBackupPath,
+        reused: false
       })
     ])
     expect(retired).toEqual([
@@ -1199,10 +1246,12 @@ describe('application database migrations', () => {
       {
         migrationId: '0003_granted_local_roots',
         path: `${databasePath}.before-0003_granted_local_roots.backup`
-      }
+      },
+      { migrationId: '0004_review_codec_version', path: reviewCodecBackupPath }
     ])
     await expect(access(backupPath)).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(access(agentContextBackupPath)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(access(reviewCodecBackupPath)).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(
       client.$queryRaw<Array<{ id: string; name: string }>>`SELECT "id", "name" FROM "Project"`
     ).resolves.toEqual([{ id: 'legacy-project', name: 'Preserved' }])

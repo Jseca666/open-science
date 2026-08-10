@@ -128,6 +128,55 @@ describe('review repository (integration)', () => {
     expect(stored.checks[2]!.locator).toBeUndefined()
   })
 
+  it('isolates shape-invalid persisted JSON without breaking healthy reviews', async () => {
+    const repository = await createRepository()
+    const healthy = await repository.createReview({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      turnMessageId: 'healthy-turn',
+      scope: scope('healthy-turn'),
+      lifecycle: 'complete',
+      outcome: 'pass'
+    })
+    const corrupt = await repository.createReview({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      turnMessageId: 'corrupt-turn',
+      scope: scope('corrupt-turn'),
+      lifecycle: 'complete',
+      outcome: 'flagged',
+      reviewerLog: [{ kind: 'message', text: 'valid before corruption' }]
+    })
+    await repository.addChecks(corrupt.id, [checks()[0]!])
+    const corruptFinding = await client!.finding.findFirstOrThrow({
+      where: { reviewId: corrupt.id }
+    })
+
+    await client!.review.update({
+      where: { id: corrupt.id },
+      data: { scope: 'null', reviewerLog: '42' }
+    })
+    await client!.finding.update({
+      where: { id: corruptFinding.id },
+      data: { locator: 'null' }
+    })
+
+    const stored = await repository.getReviewsForSession('session-1')
+    expect(stored.find((review) => review.id === healthy.id)).toMatchObject({
+      lifecycle: 'complete',
+      outcome: 'pass',
+      scope: scope('healthy-turn')
+    })
+    expect(stored.find((review) => review.id === corrupt.id)).toMatchObject({
+      lifecycle: 'error',
+      outcome: null,
+      scope: { turnMessageId: 'corrupt-turn', blocks: [], artifactVersionIds: [] },
+      reviewerLog: [],
+      checks: [{ id: corruptFinding.id, status: 'fail' }]
+    })
+    expect(stored.find((review) => review.id === corrupt.id)?.checks[0]?.locator).toBeUndefined()
+  })
+
   it('retains an error Review row when its frozen scope snapshot cannot be published', async () => {
     await createRepository()
     const invalidSnapshotRoot = join(storageRoot!, 'not-a-directory')
@@ -572,6 +621,17 @@ describe('review repository (integration)', () => {
         {
           ...input,
           eventId: 'disposition-event-2',
+          causeReviewId: outsideScope.id
+        }
+      ])
+    ).rejects.toThrow(/outside Review scope/u)
+
+    await client!.review.update({ where: { id: outsideScope.id }, data: { scope: 'null' } })
+    await expect(
+      repository.commitFindingDispositions([
+        {
+          ...input,
+          eventId: 'disposition-event-corrupt-scope',
           causeReviewId: outsideScope.id
         }
       ])

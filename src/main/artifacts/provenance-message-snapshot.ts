@@ -19,6 +19,7 @@ import type {
   ProvenanceMessage,
   ProvenanceMessagePart
 } from '../../shared/artifact-provenance'
+import { reviewPersistenceCodec } from '../reviewer/persistence-codec'
 
 type ProvenanceMessageSnapshotOptions = {
   storageRoot: string
@@ -267,16 +268,11 @@ class ProvenanceMessageSnapshotRepository {
     )
     const seedTurnIds = new Set(
       sessionReviews.flatMap((review) => {
-        let scopeVersionIds: unknown = []
-        try {
-          scopeVersionIds = (JSON.parse(review.scope) as { artifactVersionIds?: unknown })
-            .artifactVersionIds
-        } catch {
-          // A corrupt scope cannot prove a direct binding; the independently scoped message fallback
-          // below remains available for legacy rows.
-        }
+        const scope = reviewPersistenceCodec.decodeReviewScope(review)
         const directlyBound =
-          Array.isArray(scopeVersionIds) && scopeVersionIds.some((id) => versionIds.has(String(id)))
+          scope?.artifactVersionIds.some((artifactVersionId) =>
+            versionIds.has(artifactVersionId)
+          ) ?? false
         return directlyBound || versionMessageIds.has(review.turnMessageId)
           ? [review.turnMessageId]
           : []

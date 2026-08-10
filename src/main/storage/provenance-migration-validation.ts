@@ -8,6 +8,7 @@ import { NOTEBOOK_RUN_FILE } from '../../shared/notebook'
 import { normalizeSessionFile } from '../../shared/session-persistence'
 import { operationJournalPath, RuntimeOperationJournal } from '../notebook/operation-journal'
 import { createProjectDbClient } from '../projects/prisma-client'
+import { reviewPersistenceCodec } from '../reviewer/persistence-codec'
 
 const SHA256_PATTERN = /^[a-f0-9]{64}$/
 const storageKey = (...segments: string[]): string => segments.join('/')
@@ -453,7 +454,10 @@ const validateSqliteStore = async (dataRoot: string, authorityRoot: string): Pro
         }
         const payload = recordValue(JSON.parse(serialized))
         const payloadScope = recordValue(payload?.scope)
-        const reviewScope = recordValue(JSON.parse(snapshot.review.scope))
+        const reviewScope = reviewPersistenceCodec.decodeReviewScope(snapshot.review)
+        if (!reviewScope) {
+          throw new Error(`Review scope is invalid: ${snapshot.reviewId}`)
+        }
         if (
           !payload ||
           payload.schemaVersion !== snapshot.schemaVersion ||

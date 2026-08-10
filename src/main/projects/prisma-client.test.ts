@@ -104,7 +104,8 @@ describe('project prisma client (integration)', () => {
       applied: [
         '0001_runtime_schema_baseline',
         '0002_project_agent_context',
-        '0003_granted_local_roots'
+        '0003_granted_local_roots',
+        '0004_review_codec_version'
       ]
     })
 
@@ -935,6 +936,9 @@ describe('project prisma client (integration)', () => {
       turnMessageId: 'm1',
       scope: { turnMessageId: 'm1', blocks: [], artifactVersionIds: [] }
     })
+    await expect(
+      client.review.findUniqueOrThrow({ where: { id: review.id } })
+    ).resolves.toMatchObject({ codecVersion: 1 })
 
     await reviewRepo.addChecks(review.id, [
       { status: 'fail', claim: 'test claim', evidence: 'test evidence', sortIndex: 0 }
@@ -1002,16 +1006,20 @@ describe('project prisma client (integration)', () => {
       applied: [
         '0001_runtime_schema_baseline',
         '0002_project_agent_context',
-        '0003_granted_local_roots'
+        '0003_granted_local_roots',
+        '0004_review_codec_version'
       ]
     })
 
-    // Running it again is idempotent (guard catches duplicate-column error).
+    // Running the versioned migration chain again is idempotent.
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({ applied: [] })
 
     // The old row reads back with reflagCount = 0 (the column default).
     const reviewRepo = new ReviewRepository(() => Promise.resolve(client))
     const [stored] = await reviewRepo.getReviewsForSession('s1')
     expect(stored.checks[0]!.reflagCount).toBe(0)
+    await expect(client.review.findUniqueOrThrow({ where: { id: 'r1' } })).resolves.toMatchObject({
+      codecVersion: 0
+    })
   })
 })

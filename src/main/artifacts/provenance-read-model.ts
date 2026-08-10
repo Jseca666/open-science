@@ -18,15 +18,10 @@ import type {
 import type { NotebookRunInputFile } from '../../shared/notebook'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import { sanitizeActivityGroup, sanitizeToolActivity } from '../../shared/session-persistence'
-import type {
-  ReviewFindingDispositionOutcome,
-  ReviewFindingDispositionTrigger,
-  ReviewScopeSnapshotBlock,
-  ReviewWithProvenanceEvidence
-} from '../../shared/reviewer'
+import type { ReviewScopeSnapshotBlock, ReviewWithProvenanceEvidence } from '../../shared/reviewer'
 import { flagStaleReviews } from '../reviewer/stale-reviews'
 import { selectReviewChainForArtifactVersion } from '../reviewer/artifact-version-review'
-import { toCheck, toReview } from '../reviewer/repository'
+import { toCheck, toFindingDisposition, toReview } from '../reviewer/repository'
 import type { ArtifactDurability } from './durability'
 import {
   parseArtifactExecutionSnapshot,
@@ -421,7 +416,7 @@ class ArtifactProvenanceReadModel {
           }
           return {
             ...toReview(reviewRow),
-            checks: checkRows.map(toCheck),
+            checks: checkRows.map((checkRow) => toCheck(checkRow, reviewRow.codecVersion)),
             scopeSnapshot
           }
         })
@@ -472,17 +467,10 @@ class ArtifactProvenanceReadModel {
           selectedVersionId: versionId,
           versionMessageId: version.messageId ?? undefined,
           reviews: resolvedReviews,
-          dispositions: dispositionRows.map((disposition) => ({
-            id: disposition.id,
-            sourceFindingId: disposition.sourceFindingId,
-            causeReviewId: disposition.causeReviewId ?? undefined,
-            sequence: disposition.sequence,
-            trigger: disposition.trigger as ReviewFindingDispositionTrigger,
-            outcome: disposition.outcome as ReviewFindingDispositionOutcome,
-            note: disposition.note ?? undefined,
-            assessedArtifactVersionId: disposition.assessedArtifactVersionId ?? undefined,
-            createdAt: disposition.createdAt.getTime()
-          }))
+          dispositions: dispositionRows.flatMap((disposition) => {
+            const decoded = toFindingDisposition(disposition)
+            return decoded ? [decoded] : []
+          })
         })
         if (projection) review = { state: 'available', value: projection }
       }

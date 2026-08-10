@@ -497,6 +497,15 @@ describe('Provenance Message snapshots', () => {
       outcome: 'pass',
       scopeSnapshot: []
     })
+    const corrupt = await client.review.create({
+      data: {
+        id: 'corrupt-review',
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        turnMessageId: 'corrupt-turn',
+        scope: JSON.stringify({ artifactVersionIds: [version.versionId] })
+      }
+    })
     const unrelatedSnapshot = await client.reviewScopeSnapshot.findUniqueOrThrow({
       where: { reviewId: unrelated.id }
     })
@@ -539,6 +548,7 @@ describe('Provenance Message snapshots', () => {
     expect(new Set(retained.map((review) => review.id))).toEqual(
       new Set([direct.id, correction.id])
     )
+    await expect(client.review.findUnique({ where: { id: corrupt.id } })).resolves.toBeNull()
     await expect(
       client.reviewFindingDisposition.count({
         where: { sourceFindingId: directWithCheck.checks[0]!.id }
