@@ -646,6 +646,10 @@ describe('review repository (integration)', () => {
       turnMessageId: 'a1',
       scope: scope('a1')
     })
+    await client!.review.update({
+      where: { id: review.id },
+      data: { codecVersion: 0 }
+    })
 
     const updated = await repository.updateReview(review.id, {
       lifecycle: 'complete',
@@ -661,6 +665,9 @@ describe('review repository (integration)', () => {
     expect(stored.outcome).toBe('flagged')
     expect(stored.reviewerLog).toHaveLength(1)
     expect(stored.reviewerLog[0]?.kind).toBe('thought')
+    await expect(
+      client!.review.findUniqueOrThrow({ where: { id: review.id } })
+    ).resolves.toMatchObject({ codecVersion: 1 })
   })
 
   it("deletes a session's reviews and their checks, leaving other sessions untouched", async () => {

@@ -69,6 +69,7 @@ type ReviewPersistenceCodec = {
   decodeReview(row: VersionedPrismaReview): Review
   decodeFinding(row: PrismaFinding, codecVersion?: number): ReviewCheck
   decodeDisposition(row: PrismaReviewFindingDisposition): ReviewFindingDisposition | undefined
+  decodeDispositions(rows: readonly PrismaReviewFindingDisposition[]): ReviewFindingDisposition[]
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -172,21 +173,34 @@ const decodeLocatorValue = (value: unknown): FindingLocator | undefined => {
 }
 
 const decodeToolFields = (
-  value: Record<string, unknown>,
-  fallbackToolName?: string
-): ReviewerLogEntry & { kind: 'tool' } => {
+  value: Record<string, unknown>
+): (ReviewerLogEntry & { kind: 'tool' }) | undefined => {
+  const toolName = asString(value.toolName)
+  const title = asOptionalString(value.title)
+  const rawInput = asOptionalString(value.rawInput)
+  const rawOutput = asOptionalString(value.rawOutput)
   const exitCode =
     value.exitCode === null
       ? null
       : asFiniteNumber(value.exitCode) !== undefined && Number.isSafeInteger(value.exitCode)
         ? (value.exitCode as number)
         : undefined
+  if (
+    toolName === undefined ||
+    (value.title !== undefined && title === undefined) ||
+    (value.rawInput !== undefined && rawInput === undefined) ||
+    (value.rawOutput !== undefined && rawOutput === undefined) ||
+    (value.status !== undefined && value.status !== 'ok' && value.status !== 'error') ||
+    (value.exitCode !== undefined && exitCode === undefined)
+  ) {
+    return undefined
+  }
   return {
     kind: 'tool',
-    toolName: asString(value.toolName) ?? fallbackToolName ?? 'tool',
-    ...(asString(value.title) !== undefined ? { title: value.title as string } : {}),
-    ...(asString(value.rawInput) !== undefined ? { rawInput: value.rawInput as string } : {}),
-    ...(asString(value.rawOutput) !== undefined ? { rawOutput: value.rawOutput as string } : {}),
+    toolName,
+    ...(title !== undefined ? { title } : {}),
+    ...(rawInput !== undefined ? { rawInput } : {}),
+    ...(rawOutput !== undefined ? { rawOutput } : {}),
     ...(value.status === 'ok' || value.status === 'error' ? { status: value.status } : {}),
     ...(exitCode !== undefined ? { exitCode } : {})
   }
@@ -198,21 +212,7 @@ const decodeCurrentLogEntry = (value: unknown): ReviewerLogEntry | undefined => 
     const text = asString(value.text)
     return text === undefined ? undefined : { kind: value.kind, text }
   }
-  if (
-    value.kind === 'tool' &&
-    typeof value.toolName === 'string' &&
-    (value.title === undefined || typeof value.title === 'string') &&
-    (value.rawInput === undefined || typeof value.rawInput === 'string') &&
-    (value.rawOutput === undefined || typeof value.rawOutput === 'string') &&
-    (value.status === undefined || value.status === 'ok' || value.status === 'error') &&
-    (value.exitCode === undefined ||
-      value.exitCode === null ||
-      (typeof value.exitCode === 'number' &&
-        Number.isFinite(value.exitCode) &&
-        Number.isSafeInteger(value.exitCode)))
-  ) {
-    return decodeToolFields(value)
-  }
+  if (value.kind === 'tool') return decodeToolFields(value)
   return undefined
 }
 
@@ -231,14 +231,24 @@ const decodeReviewerLogValue = (
     }
     if (isRecord(current) && current.kind === 'tool_call') {
       const next = value[index + 1]
-      const merged =
-        isRecord(next) && next.kind === 'tool_result' ? { ...current, ...next } : current
-      entries.push(decodeToolFields(merged))
-      if (merged !== current) index++
+      const decodedCall = decodeToolFields(current)
+      if (isRecord(next) && next.kind === 'tool_result') {
+        const merged = decodeToolFields({ ...current, ...next, toolName: current.toolName })
+        if (merged) entries.push(merged)
+        else if (decodedCall) entries.push(decodedCall)
+        if (!merged) discarded = true
+        index++
+      } else if (decodedCall) {
+        entries.push(decodedCall)
+      } else {
+        discarded = true
+      }
       continue
     }
     if (isRecord(current) && current.kind === 'tool_result') {
-      entries.push(decodeToolFields(current))
+      const decodedResult = decodeToolFields(current)
+      if (decodedResult) entries.push(decodedResult)
+      else discarded = true
       continue
     }
     discarded = true
@@ -334,6 +344,7 @@ const encodeReviewPatch = (patch: UpdateReviewPatch): Record<string, unknown> =>
     throw new Error('Review outcome is invalid.')
   }
   return {
+    codecVersion: CURRENT_REVIEW_CODEC_VERSION,
     ...(patch.scope !== undefined ? { scope: encodeScope(patch.scope) } : {}),
     ...(patch.lifecycle !== undefined ? { lifecycle: patch.lifecycle } : {}),
     ...(patch.outcome !== undefined ? { outcome: patch.outcome } : {}),
@@ -499,6 +510,14 @@ const decodeDisposition = (
   }
 }
 
+const decodeDispositions = (
+  rows: readonly PrismaReviewFindingDisposition[]
+): ReviewFindingDisposition[] =>
+  rows.flatMap((row) => {
+    const decoded = decodeDisposition(row)
+    return decoded ? [decoded] : []
+  })
+
 const reviewPersistenceCodec: ReviewPersistenceCodec = {
   currentVersion: CURRENT_REVIEW_CODEC_VERSION,
   encodeReview,
@@ -508,7 +527,8 @@ const reviewPersistenceCodec: ReviewPersistenceCodec = {
   decodeReviewScope,
   decodeReview,
   decodeFinding,
-  decodeDisposition
+  decodeDisposition,
+  decodeDispositions
 }
 
 export { reviewPersistenceCodec }

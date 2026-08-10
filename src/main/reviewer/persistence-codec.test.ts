@@ -88,6 +88,10 @@ describe('review persistence codec', () => {
       lifecycle: 'running',
       outcome: null
     })
+    expect(reviewPersistenceCodec.encodeReviewPatch({ lifecycle: 'complete' })).toMatchObject({
+      codecVersion: 1,
+      lifecycle: 'complete'
+    })
     expect(() =>
       reviewPersistenceCodec.encodeReview({
         ...createInput(),
@@ -150,6 +154,9 @@ describe('review persistence codec', () => {
           { kind: 'thought', text: 'old thought' },
           { kind: 'tool_call', toolName: 'read_turn', title: 'read_turn()' },
           { kind: 'tool_result', status: 'ok', rawOutput: '[block-0]' },
+          { kind: 'tool_call', toolName: 42 },
+          { kind: 'tool_result', rawOutput: 'must be discarded with the invalid call' },
+          { kind: 'tool_result', rawOutput: 'orphan result without a tool identity' },
           { kind: 'unknown_future_kind', data: 'discard me' },
           { kind: 'message', text: 'done' }
         ])
@@ -226,5 +233,11 @@ describe('review persistence codec', () => {
     expect(
       reviewPersistenceCodec.decodeDisposition(dispositionRow({ outcome: 'future-outcome' }))
     ).toBeUndefined()
+    expect(
+      reviewPersistenceCodec.decodeDispositions([
+        dispositionRow(),
+        dispositionRow({ id: 'invalid-disposition', trigger: 'future-trigger' })
+      ])
+    ).toHaveLength(1)
   })
 })

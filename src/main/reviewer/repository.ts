@@ -696,10 +696,7 @@ class ReviewRepository {
       for (const reviewId of reviewIds) await touchReview(tx, reviewId)
       return dispositions
     })
-    return rows.flatMap((row) => {
-      const decoded = toFindingDisposition(row)
-      return decoded ? [decoded] : []
-    })
+    return reviewPersistenceCodec.decodeDispositions(rows)
   }
 
   async getFindingDispositions(sourceFindingId: string): Promise<ReviewFindingDisposition[]> {
@@ -708,10 +705,7 @@ class ReviewRepository {
       where: { sourceFindingId },
       orderBy: { sequence: 'asc' }
     })
-    return rows.flatMap((row) => {
-      const decoded = toFindingDisposition(row)
-      return decoded ? [decoded] : []
-    })
+    return reviewPersistenceCodec.decodeDispositions(rows)
   }
 
   // Test/diagnostic helper: total check rows, used to assert no orphans survive a cascade delete.

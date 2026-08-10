@@ -21,7 +21,8 @@ import { sanitizeActivityGroup, sanitizeToolActivity } from '../../shared/sessio
 import type { ReviewScopeSnapshotBlock, ReviewWithProvenanceEvidence } from '../../shared/reviewer'
 import { flagStaleReviews } from '../reviewer/stale-reviews'
 import { selectReviewChainForArtifactVersion } from '../reviewer/artifact-version-review'
-import { toCheck, toFindingDisposition, toReview } from '../reviewer/repository'
+import { reviewPersistenceCodec } from '../reviewer/persistence-codec'
+import { toCheck, toReview } from '../reviewer/repository'
 import type { ArtifactDurability } from './durability'
 import {
   parseArtifactExecutionSnapshot,
@@ -467,10 +468,7 @@ class ArtifactProvenanceReadModel {
           selectedVersionId: versionId,
           versionMessageId: version.messageId ?? undefined,
           reviews: resolvedReviews,
-          dispositions: dispositionRows.flatMap((disposition) => {
-            const decoded = toFindingDisposition(disposition)
-            return decoded ? [decoded] : []
-          })
+          dispositions: reviewPersistenceCodec.decodeDispositions(dispositionRows)
         })
         if (projection) review = { state: 'available', value: projection }
       }
