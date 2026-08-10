@@ -99,10 +99,6 @@ const toReview = (row: PrismaReview): Review => reviewPersistenceCodec.decodeRev
 const toCheck = (row: PrismaFinding, codecVersion?: number): ReviewCheck =>
   reviewPersistenceCodec.decodeFinding(row, codecVersion)
 
-const toFindingDisposition = (
-  row: PrismaReviewFindingDisposition
-): ReviewFindingDisposition | undefined => reviewPersistenceCodec.decodeDisposition(row)
-
 // Owns Review/check reads/writes. The client is resolved lazily per call so schema-ensure failures can
 // recover (see projects/repository.ts). Reviews live in SQLite while the transcript stays in session JSON;
 // cross-store cleanup is done here by deleting review rows (and their checks) by session/project id.
@@ -732,7 +728,7 @@ class ReviewRepository {
   }
 }
 
-export { ReviewRepository, toCheck, toFindingDisposition, toReview }
+export { ReviewRepository, toCheck, toReview }
 export type { ReviewClient, ReviewClientProvider, ReviewRepositoryOptions, FindingSeverity }
 
 // Legacy exports kept for callers that still reference toFinding.
