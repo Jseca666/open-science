@@ -1,14 +1,14 @@
 name: Build
 
-# Reusable build workflow: packages the app for macOS (arm64 + x64) and Linux, each on its own
-# native runner, and uploads the installers as pipeline artifacts. Called by release.yml (stable,
+# Reusable build workflow: packages the app for macOS (arm64 + x64), Linux, and Windows, and uploads
+# the installers as pipeline artifacts. Called by release.yml (stable,
 # on tag) and nightly.yml (rolling prerelease, on push to main) so the build matrix lives in one
 # place. Publishing is done by the caller, not here.
 #
 # `npm ci` on each runner installs the native binaries it needs (claude-agent-sdk optional package,
-# Prisma query engine). macOS uses native ARM64 and Intel macOS 26 runners so packaged-app
-# certification does not execute across architectures and Xcode 26 can compile the Icon Composer
-# asset; Linux runs on ubuntu-latest and Windows x64 on windows-latest.
+# Prisma query engine). Both macOS packages use the more available ARM64 macOS 15 runners; the x64
+# lane rebuilds its native addon for Intel and validates under Rosetta. Xcode 26 still compiles the
+# Icon Composer asset; Linux runs on ubuntu-latest and Windows x64 on windows-latest.
 on:
   workflow_call:
     inputs:
@@ -79,16 +79,18 @@ jobs:
       - id: set
         shell: bash
         run: |
-          # Run each macOS package on its native macOS 26 architecture so P0, visual, and package
-          # smoke can execute the produced app while Xcode 26 compiles build/icon.icon. Windows'
+          # Build both macOS packages on ARM64 macOS 15 runners so neither lane waits for scarce
+          # macOS 26 or Intel capacity. The x64 lane cross-rebuilds native dependencies and installs
+          # Rosetta for its package smoke. The job still selects Xcode 26 below so actool can compile
+          # build/icon.icon. Windows'
           # engine is query_engine-windows.dll.node (no `lib`
           # prefix, .dll.node not .so/.dylib). engine_keep = substring of the engine file to keep.
           # subdir/bin_os/bin_arch drive the notebook runtime staging step: `subdir` is the conda
           # platform whose micromamba + offline bundle to fetch, and bin_os/bin_arch are the
           # resources/bin/<os>/<arch> path electron-builder.yml reads the micromamba binary from.
           mac='[
-            {"name":"macos-arm64","os":"macos-26","platform":"mac","eb_args":"--mac --arm64","engine_keep":"darwin-arm64","subdir":"osx-arm64","bin_os":"mac","bin_arch":"arm64"},
-            {"name":"macos-x64","os":"macos-26-intel","platform":"mac","eb_args":"--mac --x64","engine_keep":"darwin.dylib","subdir":"osx-64","bin_os":"mac","bin_arch":"x64"}
+            {"name":"macos-arm64","os":"macos-15","platform":"mac","eb_args":"--mac --arm64","engine_keep":"darwin-arm64","subdir":"osx-arm64","bin_os":"mac","bin_arch":"arm64"},
+            {"name":"macos-x64","os":"macos-15","platform":"mac","eb_args":"--mac --x64","engine_keep":"darwin.dylib","subdir":"osx-64","bin_os":"mac","bin_arch":"x64"}
           ]'
           rest='[
             {"name":"linux-x64","os":"ubuntu-latest","platform":"linux","eb_args":"--linux","engine_keep":".so.node","subdir":"linux-64","bin_os":"linux","bin_arch":"x64"},
@@ -113,7 +115,7 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJson(needs.setup.outputs.matrix) }}
     # Keep native dependencies and packaged binaries compatible with the app's declared macOS 12
-    # minimum even though the native builders run on macOS 26.
+    # minimum even though the native builders select the Xcode 26 toolchain.
     env:
       MACOSX_DEPLOYMENT_TARGET: ${{ matrix.platform == 'mac' && '12.0' || '' }}
 
@@ -127,12 +129,47 @@ jobs:
           node-version: 22
           cache: npm
 
+      # macOS 15 images include Xcode 26 but default to Xcode 16. Select any installed Xcode 26
+      # before npm ci so native dependencies and the Icon Composer asset use the release toolchain.
+      - name: Select Xcode 26
+        if: ${{ matrix.platform == 'mac' }}
+        shell: bash
+        run: |
+          xcode=$(find /Applications -maxdepth 1 -type d -name 'Xcode_26*.app' -print -quit)
+          if [ -z "$xcode" ]; then
+            echo "::error::Xcode 26 is not installed on this runner"
+            exit 1
+          fi
+          sudo xcode-select --switch "$xcode/Contents/Developer"
+          xcodebuild -version
+
+      # Stable/nightly package smoke executes the Intel Electron app and micromamba on this ARM host.
+      # The notarization dry-run installs Rosetta in its later notarize job before final package smoke.
+      - name: Enable Intel emulation
+        if: ${{ matrix.name == 'macos-x64' && !inputs.skip_verify }}
+        run: sudo softwareupdate --install-rosetta --agree-to-license
+
       # npm ci runs postinstall: prisma generate + electron-builder install-app-deps.
       - name: Install dependencies
         run: npm ci
 
+      # npm ci rebuilds native modules for the ARM host. Rebuild the shipped N-API addon for Intel
+      # before electron-builder copies it into the x64 app, then fail closed on the Mach-O slice.
+      - name: Rebuild Intel native dependencies
+        if: ${{ matrix.name == 'macos-x64' }}
+        shell: bash
+        run: |
+          ./node_modules/.bin/electron-builder install-app-deps --platform darwin --arch x64
+          addon=$(find node_modules/@aipoch/safe-file-publisher-native/build/Release -type f -name '*.node' -print -quit)
+          if [ -z "$addon" ]; then
+            echo "::error::safe-file-publisher native addon was not rebuilt"
+            exit 1
+          fi
+          lipo -verify_arch x86_64 "$addon"
+          lipo -info "$addon"
+
       # electron-builder compiles build/icon.icon with actool. Fail here with a focused diagnostic
-      # instead of much later in packaging if the runner image ever loses its Xcode 26 selection.
+      # instead of much later in packaging if the selected Xcode 26 installation is incomplete.
       - name: Verify Icon Composer build tools
         if: ${{ matrix.platform == 'mac' }}
         run: actool --version
@@ -193,8 +230,8 @@ jobs:
           fi
 
       # electron-builder 26.15.3 creates its temporary keychain with a random password but invokes
-      # `security set-key-partition-list -k` with the P12 password. macOS 26 Intel rejects that
-      # mismatch with SecKeychainUnlock. Import the certificate ourselves with the correct password
+      # `security set-key-partition-list -k` with the P12 password. The temporary keychain can reject
+      # that mismatch with SecKeychainUnlock, so import the certificate with the correct password
       # for each boundary, then give electron-builder only the prepared keychain path.
       - name: Prepare macOS signing keychain
         id: mac_signing
@@ -361,7 +398,7 @@ jobs:
         run: npm run test:e2e:p0
 
       # Visual behavior uses the same renderer bundle on every package. Keep one canonical hard gate
-      # beside P0 instead of multiplying antialiasing and launch variance across four native runners.
+      # beside P0 instead of multiplying antialiasing and launch variance across four packages.
       - name: Run desktop visual regression
         id: visual
         if: >-

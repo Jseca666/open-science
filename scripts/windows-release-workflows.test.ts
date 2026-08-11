@@ -151,6 +151,9 @@ describe('post-merge Windows validation', () => {
     const setup = readWorkflow('build.yml').jobs.setup.steps?.find(({ id }) => id === 'set')
     const job = readWorkflow('build.yml').jobs.build
     const names = job.steps?.map(({ name }) => name) ?? []
+    const selectXcode = findStep(job, 'Select Xcode 26')
+    const buildRosetta = findStep(job, 'Enable Intel emulation')
+    const rebuildIntel = findStep(job, 'Rebuild Intel native dependencies')
     const packaged = findStep(job, 'Resolve packaged Electron executable')
     const p0 = findStep(job, 'Run P0 Electron certification')
     const visual = findStep(job, 'Run desktop visual regression')
@@ -158,15 +161,27 @@ describe('post-merge Windows validation', () => {
     const linux = findStep(job, 'Smoke test Linux packages')
     const evidence = findStep(job, 'Record platform certification evidence')
     const notarize = readWorkflow('notarize-mac.yml').jobs.notarize
+    const notarizeRosetta = findStep(notarize, 'Enable Intel emulation')
     const notarizeDryRun = readWorkflow('notarize-dryrun.yml').jobs.notarize
     const finalMacos = findStep(notarize, 'Smoke test final macOS packages')
     const refreshedMacosEvidence = findStep(notarize, 'Refresh macOS certification evidence')
 
-    expect(setup.run).toContain('"name":"macos-arm64","os":"macos-26"')
-    expect(setup.run).toContain('"name":"macos-x64","os":"macos-26-intel"')
+    expect(setup.run).toContain('"name":"macos-arm64","os":"macos-15"')
+    expect(setup.run).toContain('"name":"macos-x64","os":"macos-15"')
+    expect(selectXcode.if).toBe("${{ matrix.platform == 'mac' }}")
+    expect(selectXcode.run).toContain("-name 'Xcode_26*.app'")
+    expect(selectXcode.run).toContain('xcode-select --switch')
+    expect(selectXcode.run).toContain('xcodebuild -version')
     expect(job.env?.MACOSX_DEPLOYMENT_TARGET).toBe(
       "${{ matrix.platform == 'mac' && '12.0' || '' }}"
     )
+    expect(buildRosetta.if).toBe("${{ matrix.name == 'macos-x64' && !inputs.skip_verify }}")
+    expect(buildRosetta.run).toContain('softwareupdate --install-rosetta --agree-to-license')
+    expect(rebuildIntel.if).toBe("${{ matrix.name == 'macos-x64' }}")
+    expect(rebuildIntel.run).toContain(
+      'electron-builder install-app-deps --platform darwin --arch x64'
+    )
+    expect(rebuildIntel.run).toContain('lipo -verify_arch x86_64')
     expect(packaged.id).toBe('packaged_app')
     expect(packaged.run).toContain('Open Science.app/Contents/MacOS/Open Science')
     expect(packaged.run).toContain('win-unpacked/open-science.exe')
@@ -197,13 +212,17 @@ describe('post-merge Windows validation', () => {
     expect(notarize.strategy?.matrix).toEqual({
       include: [
         { arch: 'arm64', os: 'macos-15' },
-        { arch: 'x64', os: 'macos-15-intel' }
+        { arch: 'x64', os: 'macos-15' }
       ]
     })
     expect(refreshedMacosEvidence.run).toContain('--package-smoke passed')
     expect(refreshedMacosEvidence.run).toContain(
       '--database-migration-certification mac/database-migration-certification.json'
     )
+    expect(notarizeRosetta.if).toBe(
+      "${{ steps.gate.outputs.enabled == 'true' && matrix.arch == 'x64' }}"
+    )
+    expect(notarizeRosetta.run).toContain('softwareupdate --install-rosetta --agree-to-license')
     expect(refreshedMacosEvidence.run).toContain("matrix.arch == 'arm64'")
     expect(refreshedMacosEvidence.if).toContain('inputs.certified_build')
     expect(notarizeDryRun.with?.certified_build).toBe(false)
