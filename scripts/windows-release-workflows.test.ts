@@ -183,7 +183,7 @@ describe('post-merge Windows validation', () => {
     expect(rebuildIntel.run).toContain(
       'electron-builder install-app-deps --platform darwin --arch x64'
     )
-    expect(rebuildIntel.run).toContain('lipo -verify_arch x86_64')
+    expect(rebuildIntel.run).toContain('lipo "$addon" -verify_arch x86_64')
     expect(packaged.id).toBe('packaged_app')
     expect(packaged.run).toContain('Open Science.app/Contents/MacOS/Open Science')
     expect(packaged.run).toContain('win-unpacked/open-science.exe')

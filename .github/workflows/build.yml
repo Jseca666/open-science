@@ -167,7 +167,7 @@ jobs:
             echo "::error::safe-file-publisher native addon was not rebuilt"
             exit 1
           fi
-          lipo -verify_arch x86_64 "$addon"
+          lipo "$addon" -verify_arch x86_64
           lipo -info "$addon"
 
       # electron-builder compiles build/icon.icon with actool. Fail here with a focused diagnostic
