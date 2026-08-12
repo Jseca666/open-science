@@ -104,10 +104,9 @@ nsis:
   allowToChangeInstallationDirectory: true
   include: build/installer.nsh
 mac:
-  # Compile the Icon Composer package into the app bundle (Assets.car + an ICNS fallback for
-  # pre-Tahoe macOS). This is intentionally separate from dmg.icon below: the mounted installer
-  # volume still uses the legacy, explicitly-designed ICNS artwork.
-  icon: build/icon.icon
+  # Xcode 26 actool cannot reliably compile Icon Composer packages on macOS 15 runners. Use the
+  # existing ICNS artwork for both the app and mounted installer volume.
+  icon: build/icon.icns
   darkModeSupport: true
   artifactName: aipoch-${name}-${version}-mac-${arch}.${ext}
   # Minimum macOS to run the app (written to Info.plist LSMinimumSystemVersion). macOS 12 (Monterey)

@@ -91,7 +91,6 @@ describe('macOS package smoke', () => {
       writeFile(join(executableDirectory, 'Open Science'), ''),
       writeFile(join(resources, 'app.asar'), ''),
       writeFile(join(resources, 'micromamba'), ''),
-      writeFile(join(resources, 'Assets.car'), ''),
       writeFile(join(resources, 'icon.icns'), ''),
       writeFile(join(prismaClient, 'libquery_engine-darwin-arm64.dylib.node'), '')
     ])
@@ -101,10 +100,6 @@ describe('macOS package smoke', () => {
       micromamba: join(resources, 'micromamba')
     })
 
-    await rm(join(resources, 'Assets.car'))
-    await expect(assertPackagedResources(appBundle)).rejects.toThrow()
-
-    await writeFile(join(resources, 'Assets.car'), '')
     await writeFile(join(prismaClient, 'libquery_engine-darwin.dylib.node'), '')
     await expect(assertPackagedResources(appBundle)).rejects.toThrow(/exactly one Prisma engine/)
     await rm(join(prismaClient, 'libquery_engine-darwin.dylib.node'))
