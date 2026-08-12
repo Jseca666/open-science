@@ -129,19 +129,17 @@ jobs:
           node-version: 22
           cache: npm
 
-      # macOS 15 images include Xcode 26 but default to Xcode 16. Select any installed Xcode 26
-      # before npm ci so native dependencies and the Icon Composer asset use the release toolchain.
+      # macOS 15 images default to Xcode 16. Pin Xcode 26.3: its actool supports Icon Composer,
+      # while 26.0.1 can crash against macOS 15 system frameworks during asset compilation.
       - name: Select Xcode 26
         if: ${{ matrix.platform == 'mac' }}
         shell: bash
         run: |
-          shopt -s nullglob
-          xcodes=(/Applications/Xcode_26*.app)
-          if [ "${#xcodes[@]}" -eq 0 ]; then
-            echo "::error::Xcode 26 is not installed on this runner"
+          xcode=/Applications/Xcode_26.3.app
+          if [ ! -d "$xcode" ]; then
+            echo "::error::Xcode 26.3 is not installed on this runner"
             exit 1
           fi
-          xcode="${xcodes[0]}"
           sudo xcode-select --switch "$xcode/Contents/Developer"
           xcodebuild -version
 
