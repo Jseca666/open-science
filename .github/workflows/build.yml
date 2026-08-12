@@ -135,11 +135,13 @@ jobs:
         if: ${{ matrix.platform == 'mac' }}
         shell: bash
         run: |
-          xcode=$(find /Applications -maxdepth 1 -type d -name 'Xcode_26*.app' -print -quit)
-          if [ -z "$xcode" ]; then
+          shopt -s nullglob
+          xcodes=(/Applications/Xcode_26*.app)
+          if [ "${#xcodes[@]}" -eq 0 ]; then
             echo "::error::Xcode 26 is not installed on this runner"
             exit 1
           fi
+          xcode="${xcodes[0]}"
           sudo xcode-select --switch "$xcode/Contents/Developer"
           xcodebuild -version
 
