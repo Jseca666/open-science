@@ -7,8 +7,8 @@ name: Build
 #
 # `npm ci` on each runner installs the native binaries it needs (claude-agent-sdk optional package,
 # Prisma query engine). Both macOS packages use the more available ARM64 macOS 15 runners; the x64
-# lane rebuilds its native addon for Intel and validates under Rosetta. Xcode 26 still compiles the
-# Icon Composer asset; Linux runs on ubuntu-latest and Windows x64 on windows-latest.
+# lane rebuilds its native addon for Intel and validates under Rosetta. macOS packaging uses the
+# compatible ICNS app icon; Linux runs on ubuntu-latest and Windows x64 on windows-latest.
 on:
   workflow_call:
     inputs:
@@ -81,8 +81,7 @@ jobs:
         run: |
           # Build both macOS packages on ARM64 macOS 15 runners so neither lane waits for scarce
           # macOS 26 or Intel capacity. The x64 lane cross-rebuilds native dependencies and installs
-          # Rosetta for its package smoke. The job still selects Xcode 26 below so actool can compile
-          # build/icon.icon. Windows'
+          # Rosetta for its package smoke. Windows'
           # engine is query_engine-windows.dll.node (no `lib`
           # prefix, .dll.node not .so/.dylib). engine_keep = substring of the engine file to keep.
           # subdir/bin_os/bin_arch drive the notebook runtime staging step: `subdir` is the conda
@@ -115,7 +114,7 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJson(needs.setup.outputs.matrix) }}
     # Keep native dependencies and packaged binaries compatible with the app's declared macOS 12
-    # minimum even though the native builders select the Xcode 26 toolchain.
+    # minimum on the macOS 15 ARM builders.
     env:
       MACOSX_DEPLOYMENT_TARGET: ${{ matrix.platform == 'mac' && '12.0' || '' }}
 
@@ -128,20 +127,6 @@ jobs:
         with:
           node-version: 22
           cache: npm
-
-      # macOS 15 images default to Xcode 16. Pin Xcode 26.3: its actool supports Icon Composer,
-      # while 26.0.1 can crash against macOS 15 system frameworks during asset compilation.
-      - name: Select Xcode 26
-        if: ${{ matrix.platform == 'mac' }}
-        shell: bash
-        run: |
-          xcode=/Applications/Xcode_26.3.app
-          if [ ! -d "$xcode" ]; then
-            echo "::error::Xcode 26.3 is not installed on this runner"
-            exit 1
-          fi
-          sudo xcode-select --switch "$xcode/Contents/Developer"
-          xcodebuild -version
 
       # Stable/nightly package smoke executes the Intel Electron app and micromamba on this ARM host.
       # The notarization dry-run installs Rosetta in its later notarize job before final package smoke.
@@ -167,12 +152,6 @@ jobs:
           fi
           lipo "$addon" -verify_arch x86_64
           lipo -info "$addon"
-
-      # electron-builder compiles build/icon.icon with actool. Fail here with a focused diagnostic
-      # instead of much later in packaging if the selected Xcode 26 installation is incomplete.
-      - name: Verify Icon Composer build tools
-        if: ${{ matrix.platform == 'mac' }}
-        run: actool --version
 
       # Installers do not carry a managed-runtime bundle. Stable/nightly builds therefore fail closed
       # unless the exact immutable manifest required by this app version and platform is already live

@@ -96,9 +96,7 @@ const assertPackagedResources = async (appBundle) => {
     join(appBundle, 'Contents', 'MacOS', 'Open Science'),
     join(resources, 'app.asar'),
     join(resources, 'micromamba'),
-    // electron-builder compiles build/icon.icon into the adaptive catalog and also emits an ICNS
-    // fallback for macOS releases that predate Icon Composer.
-    join(resources, 'Assets.car'),
+    // The macOS 15-compatible package uses the committed ICNS artwork.
     join(resources, 'icon.icns')
   ]
   for (const path of paths) await access(path)

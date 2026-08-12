@@ -151,7 +151,6 @@ describe('post-merge Windows validation', () => {
     const setup = readWorkflow('build.yml').jobs.setup.steps?.find(({ id }) => id === 'set')
     const job = readWorkflow('build.yml').jobs.build
     const names = job.steps?.map(({ name }) => name) ?? []
-    const selectXcode = findStep(job, 'Select Xcode 26')
     const buildRosetta = findStep(job, 'Enable Intel emulation')
     const rebuildIntel = findStep(job, 'Rebuild Intel native dependencies')
     const packaged = findStep(job, 'Resolve packaged Electron executable')
@@ -168,10 +167,6 @@ describe('post-merge Windows validation', () => {
 
     expect(setup.run).toContain('"name":"macos-arm64","os":"macos-15"')
     expect(setup.run).toContain('"name":"macos-x64","os":"macos-15"')
-    expect(selectXcode.if).toBe("${{ matrix.platform == 'mac' }}")
-    expect(selectXcode.run).toContain('xcode=/Applications/Xcode_26.3.app')
-    expect(selectXcode.run).toContain('xcode-select --switch')
-    expect(selectXcode.run).toContain('xcodebuild -version')
     expect(job.env?.MACOSX_DEPLOYMENT_TARGET).toBe(
       "${{ matrix.platform == 'mac' && '12.0' || '' }}"
     )

@@ -72,13 +72,13 @@ describe('electron-builder Linux desktop identity', () => {
 })
 
 describe('electron-builder macOS icons', () => {
-  it('uses Icon Composer for the app and signs the legacy-icon DMG container', () => {
+  it('uses ICNS for the app and signed DMG while preserving adaptive source artwork', () => {
     const config = load(readFileSync(join(process.cwd(), 'electron-builder.yml'), 'utf8')) as {
       mac?: { icon?: string; darkModeSupport?: boolean }
       dmg?: { icon?: string; sign?: boolean }
     }
 
-    expect(config.mac?.icon).toBe('build/icon.icon')
+    expect(config.mac?.icon).toBe('build/icon.icns')
     expect(config.mac?.darkModeSupport).toBe(true)
     expect(config.dmg?.icon).toBe('build/icon.icns')
     expect(config.dmg?.sign).toBe(true)
