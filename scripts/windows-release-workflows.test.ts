@@ -169,7 +169,9 @@ describe('post-merge Windows validation', () => {
     expect(setup.run).toContain('"name":"macos-arm64","os":"macos-15"')
     expect(setup.run).toContain('"name":"macos-x64","os":"macos-15"')
     expect(selectXcode.if).toBe("${{ matrix.platform == 'mac' }}")
-    expect(selectXcode.run).toContain("-name 'Xcode_26*.app'")
+    expect(selectXcode.run).toContain('shopt -s nullglob')
+    expect(selectXcode.run).toContain('xcodes=(/Applications/Xcode_26*.app)')
+    expect(selectXcode.run).toContain('xcode="${xcodes[0]}"')
     expect(selectXcode.run).toContain('xcode-select --switch')
     expect(selectXcode.run).toContain('xcodebuild -version')
     expect(job.env?.MACOSX_DEPLOYMENT_TARGET).toBe(
