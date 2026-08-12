@@ -75,7 +75,7 @@ describe('macOS package smoke', () => {
     ])
   })
 
-  it('requires the adaptive icon catalog and its legacy ICNS fallback', async () => {
+  it('requires the ICNS icon and architecture-specific Prisma engine', async () => {
     const root = await mkdtemp(join(tmpdir(), 'open-science-macos-app-'))
     roots.push(root)
     const appBundle = join(root, 'Open Science.app')

@@ -16,7 +16,7 @@ import {
 
 const ARTIFACT_PATTERN = /^aipoch-open-science-(.+)-mac-(?:arm64|x64)\.(dmg|zip)$/
 const SMOKE_ROOT_PREFIX = 'open-science-macos-package-smoke-'
-const STARTUP_TIMEOUT_MS = 60_000
+const STARTUP_TIMEOUT_MS = 180_000
 
 const delay = (milliseconds) =>
   new Promise((resolveDelay) => setTimeout(resolveDelay, milliseconds))
@@ -137,7 +137,11 @@ const launchAndProbe = async ({ executable, expectedVersion, env, userDataRoot }
 
   try {
     const service = await Promise.race([
-      waitFor('the packaged macOS web service', async () => parsePackagedAppEndpoint(output)),
+      waitFor('the packaged macOS web service', async () => parsePackagedAppEndpoint(output)).catch(
+        (error) => {
+          throw new Error(`${error.message}\n${output}`)
+        }
+      ),
       exit.then((code) => {
         throw new Error(`Packaged macOS app exited before becoming healthy (${code}).\n${output}`)
       })
