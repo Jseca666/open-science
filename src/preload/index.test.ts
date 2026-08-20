@@ -986,6 +986,38 @@ describe('preload bridge — window find IPC channels', () => {
     expect(removeListenerMock).toHaveBeenCalledWith('window:find-prepare', expect.any(Function))
   })
 
+  it('waits for every mounted find target before acknowledging one preparation', () => {
+    const firstListener = vi.fn()
+    const secondListener = vi.fn()
+    const disposeFirst = api.window.announceWindowFindReady?.(firstListener) as
+      (() => void) | undefined
+    const disposeSecond = api.window.announceWindowFindReady?.(secondListener) as
+      (() => void) | undefined
+    const wrappedListener = onMock.mock.calls.find(
+      ([channel]) => channel === 'window:find-prepare'
+    )?.[1] as ((event: unknown, payload: unknown) => void) | undefined
+
+    expect(onMock.mock.calls.filter(([channel]) => channel === 'window:find-prepare')).toHaveLength(
+      1
+    )
+    expect(
+      sendMock.mock.calls.filter(([channel]) => channel === 'shortcut:window-find-ready')
+    ).toHaveLength(1)
+
+    wrappedListener?.({}, { requestId: 42 })
+    firstListener.mock.calls[0]?.[0].complete()
+    expect(sendMock).not.toHaveBeenCalledWith('window:find-prepared', { requestId: 42 })
+
+    secondListener.mock.calls[0]?.[0].complete()
+    expect(sendMock).toHaveBeenCalledTimes(2)
+    expect(sendMock).toHaveBeenLastCalledWith('window:find-prepared', { requestId: 42 })
+
+    disposeFirst?.()
+    expect(sendMock).not.toHaveBeenCalledWith('shortcut:window-find-unready')
+    disposeSecond?.()
+    expect(sendMock).toHaveBeenLastCalledWith('shortcut:window-find-unready')
+  })
+
   it('forwards renderer theme changes to main as a typed appearance payload', () => {
     const appearance = { theme: 'dark' as const, followsSystem: false }
 

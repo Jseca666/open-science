@@ -78,7 +78,11 @@ import type {
   SideChatSessionRequest,
   SideChatStartRequest
 } from '../shared/side-chat'
-import { announceWindowFindReady, subscribeCloseActivePane } from '../shared/window-controls'
+import {
+  announceWindowFindReady,
+  subscribeCloseActivePane,
+  type WindowFindPreparation
+} from '../shared/window-controls'
 
 type RemoveListener = () => void
 type AcpListener<Payload> = (payload: Payload) => void
@@ -91,6 +95,71 @@ const onIpcMessage = <Payload>(channel: string, listener: AcpListener<Payload>):
 
   return () => {
     ipcRenderer.removeListener(channel, wrappedListener)
+  }
+}
+
+type WindowFindTargetRegistration = {
+  listener: (preparation: WindowFindPreparation) => void
+  pendingCompletions: Set<() => void>
+}
+
+const windowFindTargets = new Set<WindowFindTargetRegistration>()
+let stopWindowFindHandshake: RemoveListener | undefined
+
+const prepareAllWindowFindTargets = (preparation: WindowFindPreparation): void => {
+  const targets = [...windowFindTargets]
+  if (targets.length === 0) {
+    preparation.complete()
+    return
+  }
+
+  let remaining = targets.length
+  for (const target of targets) {
+    // Main keeps only the latest overlay request. Resolve any older preparation owned by this target
+    // before replacing it so rapid query changes cannot retain stale completion callbacks until unmount.
+    for (const complete of [...target.pendingCompletions]) complete()
+    let completed = false
+    const completeTarget = (): void => {
+      if (completed) return
+      completed = true
+      target.pendingCompletions.delete(completeTarget)
+      remaining -= 1
+      if (remaining === 0) preparation.complete()
+    }
+    target.pendingCompletions.add(completeTarget)
+    target.listener({ requestId: preparation.requestId, complete: completeTarget })
+  }
+}
+
+const registerWindowFindTarget = (
+  listener: ((preparation: WindowFindPreparation) => void) | undefined
+): RemoveListener => {
+  const target: WindowFindTargetRegistration = {
+    listener: listener ?? ((preparation) => preparation.complete()),
+    pendingCompletions: new Set()
+  }
+  windowFindTargets.add(target)
+  if (windowFindTargets.size === 1) {
+    stopWindowFindHandshake = announceWindowFindReady(
+      {
+        on: (channel, prepareListener) => onIpcMessage(channel, prepareListener),
+        send: (channel, payload) =>
+          payload === undefined ? ipcRenderer.send(channel) : ipcRenderer.send(channel, payload)
+      },
+      prepareAllWindowFindTargets
+    )
+  }
+
+  let removed = false
+  return () => {
+    if (removed) return
+    removed = true
+    windowFindTargets.delete(target)
+    for (const complete of [...target.pendingCompletions]) complete()
+    if (windowFindTargets.size > 0) return
+
+    stopWindowFindHandshake?.()
+    stopWindowFindHandshake = undefined
   }
 }
 
@@ -853,15 +922,7 @@ const api: OpenScienceAPI = {
     // The Workspace announces it is mounted and searchable so main knows whether to intercept
     // Cmd/Ctrl+F. Before native find runs, the optional listener can expose deferred transcript rows
     // and acknowledge completion without handling raw IPC request ids itself.
-    announceWindowFindReady: (listener) =>
-      announceWindowFindReady(
-        {
-          on: (channel, prepareListener) => onIpcMessage(channel, prepareListener),
-          send: (channel, payload) =>
-            payload === undefined ? ipcRenderer.send(channel) : ipcRenderer.send(channel, payload)
-        },
-        listener
-      ),
+    announceWindowFindReady: registerWindowFindTarget,
     onFindInPageResult: (listener) =>
       electronRendererContracts.subscribe('window.onFindInPageResult', listener),
     // Overlay-only surface: main signals the bar was shown (focus + restore remembered query), and the

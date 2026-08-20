@@ -496,7 +496,12 @@ describe('conversation message scroller integration', () => {
     expect(workspaceMessageScrollerSource).not.toContain('createActivityToggleLabel(')
     expect(workspaceMessageScrollerSource).not.toContain('renderWebSearchDetails(')
     expect(workspaceMessageScrollerSource).not.toContain('formatActivityDetails(activity)')
-    expect(workspaceMessageScrollerSource).toContain('conversationItems.map((item, itemIndex)')
+    expect(workspaceMessageScrollerSource).toContain(
+      'renderedConversationItems.map((item, windowItemIndex)'
+    )
+    expect(workspaceMessageScrollerSource).toContain(
+      'const itemIndex = transcriptWindowStart + windowItemIndex'
+    )
     expect(workspaceMessageScrollerSource).toMatch(/import \{[^}]*\buseState\b[^}]*\} from 'react'/)
     expect(workspaceMessageScrollerSource).toContain('const currentSessionId = activeSession?.id')
     expect(workspaceMessageScrollerSource).toContain(
