@@ -4,20 +4,24 @@ import { resolveFindOverlayOwner } from './find-overlay-registry'
 import {
   WINDOW_FIND_CLEAR_CHANNEL,
   WINDOW_FIND_CLOSE_CHANNEL,
+  WINDOW_FIND_PREPARED_CHANNEL,
+  WINDOW_FIND_PREPARE_CHANNEL,
   WINDOW_FIND_REQUEST_CHANNEL,
   WINDOW_FIND_RESULT_CHANNEL,
+  type WindowFindPrepareRequest,
   type WindowFindRequest,
   type WindowFindResult
 } from '../shared/window-controls'
 
-// The MAIN window's webContents is what actually gets searched and emits found-in-page. It needs no
-// send(): results are delivered to the OVERLAY that issued the request, not echoed to the main window.
+// The MAIN window's webContents is what actually gets searched and emits found-in-page. Main first
+// sends it a prepare request so React can expose any transcript rows outside the initial render window.
 type FindTargetWebContents = {
   findInPage: (
     text: string,
     options: { findNext: boolean; forward: boolean; matchCase: boolean }
   ) => number
   stopFindInPage: (action: 'clearSelection') => void
+  send: (channel: string, payload: WindowFindPrepareRequest) => void
   on: (
     event: 'found-in-page',
     listener: (event: unknown, result: WindowFindResult & { requestId: number }) => void
@@ -40,10 +44,16 @@ const isWindowFindRequest = (value: unknown): value is WindowFindRequest => {
   if (!value || typeof value !== 'object') return false
   const request = value as Partial<WindowFindRequest>
   return (
+    Number.isSafeInteger(request.requestId) &&
     typeof request.text === 'string' &&
     typeof request.findNext === 'boolean' &&
     typeof request.forward === 'boolean'
   )
+}
+
+const isWindowFindPrepareRequest = (value: unknown): value is WindowFindPrepareRequest => {
+  if (!value || typeof value !== 'object') return false
+  return Number.isSafeInteger((value as Partial<WindowFindPrepareRequest>).requestId)
 }
 
 // Registers native page-find for the overlay->main-window flow. The overlay owns the query UI; main
@@ -61,6 +71,10 @@ const registerWindowFindIpcHandlers = (deps: WindowFindIpcDeps = {}): void => {
   const activeRequests = new WeakMap<
     FindTargetWebContents,
     { nativeRequestId: number; rendererRequestId: number; replyTo: OverlayWebContents }
+  >()
+  const pendingRequests = new WeakMap<
+    FindTargetWebContents,
+    { request: WindowFindRequest; replyTo: OverlayWebContents }
   >()
   const listening = new WeakSet<FindTargetWebContents>()
 
@@ -80,11 +94,11 @@ const registerWindowFindIpcHandlers = (deps: WindowFindIpcDeps = {}): void => {
     })
   }
 
-  ipcMain.on(WINDOW_FIND_REQUEST_CHANNEL, (event: IpcMainEvent, request: unknown): void => {
-    if (!isWindowFindRequest(request) || request.text.length === 0) return
-    const webContents = resolveMainWindow(event.sender)?.webContents
-    if (!webContents) return
-
+  const startFind = (
+    webContents: FindTargetWebContents,
+    request: WindowFindRequest,
+    replyTo: OverlayWebContents
+  ): void => {
     installResultListener(webContents)
     activeRequests.set(webContents, {
       nativeRequestId: webContents.findInPage(request.text, {
@@ -93,13 +107,33 @@ const registerWindowFindIpcHandlers = (deps: WindowFindIpcDeps = {}): void => {
         matchCase: false
       }),
       rendererRequestId: request.requestId,
-      replyTo: event.sender
+      replyTo
     })
+  }
+
+  ipcMain.on(WINDOW_FIND_REQUEST_CHANNEL, (event: IpcMainEvent, request: unknown): void => {
+    if (!isWindowFindRequest(request) || request.text.length === 0) return
+    const webContents = resolveMainWindow(event.sender)?.webContents
+    if (!webContents) return
+
+    pendingRequests.set(webContents, { request, replyTo: event.sender })
+    webContents.send(WINDOW_FIND_PREPARE_CHANNEL, { requestId: request.requestId })
+  })
+
+  ipcMain.on(WINDOW_FIND_PREPARED_CHANNEL, (event: IpcMainEvent, payload: unknown): void => {
+    if (!isWindowFindPrepareRequest(payload)) return
+    const webContents = event.sender as unknown as FindTargetWebContents
+    const pendingRequest = pendingRequests.get(webContents)
+    if (!pendingRequest || pendingRequest.request.requestId !== payload.requestId) return
+
+    pendingRequests.delete(webContents)
+    startFind(webContents, pendingRequest.request, pendingRequest.replyTo)
   })
 
   ipcMain.on(WINDOW_FIND_CLEAR_CHANNEL, (event: IpcMainEvent): void => {
     const webContents = resolveMainWindow(event.sender)?.webContents
     if (!webContents) return
+    pendingRequests.delete(webContents)
     activeRequests.delete(webContents)
     webContents.stopFindInPage('clearSelection')
   })

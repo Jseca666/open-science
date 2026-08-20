@@ -21,6 +21,8 @@ import {
 type WorkspaceRunMarksProps = {
   items: readonly GroupedConversationItem[]
   viewport: HTMLDivElement | null
+  transcriptWindowStart?: number
+  onRevealMessage?: (messageId: string) => void
 }
 
 const RUN_MARK_HOVER_DELAY_MS = 200
@@ -37,7 +39,9 @@ type RunMarkRailPosition = {
 
 const WorkspaceRunMarks = ({
   items,
-  viewport
+  viewport,
+  transcriptWindowStart = 0,
+  onRevealMessage
 }: WorkspaceRunMarksProps): React.JSX.Element | null => {
   const { t } = useTranslation()
   const marks = useMemo(() => createRunMarks(items), [items])
@@ -49,6 +53,7 @@ const WorkspaceRunMarks = ({
   const [railPosition, setRailPosition] = useState<RunMarkRailPosition | null>(null)
   const animationFrameRef = useRef<number | undefined>(undefined)
   const layoutAnimationFrameRef = useRef<number | undefined>(undefined)
+  const pendingNavigationRef = useRef<{ mark: RunMark; index: number } | undefined>(undefined)
 
   const updateCurrentIndex = useCallback((): void => {
     if (!viewport || marks.length === 0) return
@@ -87,10 +92,15 @@ const WorkspaceRunMarks = ({
         element.dataset.messageId ? [element.dataset.messageId] : []
       )
     )
-    // The rendered transcript is the source of truth for whether a projected mark is navigable.
+    // A parent with a bounded transcript window can reveal hidden targets on demand; otherwise the
+    // rendered transcript remains the source of truth for whether a projected mark is navigable.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setAvailableMessageIds(
-      new Set(marks.flatMap((mark) => (renderedMessageIds.has(mark.id) ? [mark.id] : [])))
+      new Set(
+        marks.flatMap((mark) =>
+          onRevealMessage || renderedMessageIds.has(mark.id) ? [mark.id] : []
+        )
+      )
     )
     updateCurrentIndex()
     updateRailPosition()
@@ -132,24 +142,42 @@ const WorkspaceRunMarks = ({
         layoutAnimationFrameRef.current = undefined
       }
     }
-  }, [marks, updateCurrentIndex, updateRailPosition, viewport])
+  }, [marks, onRevealMessage, updateCurrentIndex, updateRailPosition, viewport])
 
-  const scrollToRun = (mark: RunMark, index: number): void => {
-    if (!viewport) return
-    const target = findMessageTarget(viewport, mark.id)
-    if (!target) return
+  const scrollToRun = useCallback(
+    (mark: RunMark, index: number): void => {
+      if (!viewport) return
+      const target = findMessageTarget(viewport, mark.id)
+      if (!target) {
+        if (onRevealMessage) {
+          pendingNavigationRef.current = { mark, index }
+          onRevealMessage(mark.id)
+        }
+        return
+      }
 
-    const viewportTop = viewport.getBoundingClientRect().top
-    const targetTop = target.getBoundingClientRect().top
-    const maximumScrollTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight)
-    const nextScrollTop = Math.min(
-      Math.max(0, viewport.scrollTop + targetTop - viewportTop - RUN_MARK_TOP_OFFSET_PX),
-      maximumScrollTop
-    )
-    const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
-    viewport.scrollTo({ top: nextScrollTop, behavior: reduceMotion ? 'auto' : 'smooth' })
-    setCurrentIndex(index)
-  }
+      const viewportTop = viewport.getBoundingClientRect().top
+      const targetTop = target.getBoundingClientRect().top
+      const maximumScrollTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight)
+      const nextScrollTop = Math.min(
+        Math.max(0, viewport.scrollTop + targetTop - viewportTop - RUN_MARK_TOP_OFFSET_PX),
+        maximumScrollTop
+      )
+      const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
+      viewport.scrollTo({ top: nextScrollTop, behavior: reduceMotion ? 'auto' : 'smooth' })
+      setCurrentIndex(index)
+    },
+    [onRevealMessage, viewport]
+  )
+
+  useLayoutEffect(() => {
+    const pendingNavigation = pendingNavigationRef.current
+    if (!pendingNavigation || !viewport) return
+    if (!findMessageTarget(viewport, pendingNavigation.mark.id)) return
+
+    pendingNavigationRef.current = undefined
+    scrollToRun(pendingNavigation.mark, pendingNavigation.index)
+  }, [scrollToRun, transcriptWindowStart, viewport])
 
   if (marks.length < 2 || !railPosition || typeof document === 'undefined') return null
 

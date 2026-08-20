@@ -207,6 +207,30 @@ const renderScroller = async (
   )
 }
 
+describe('WorkspaceMessageScroller transcript render budget', () => {
+  it('keeps the initial message row count bounded for a long conversation', async () => {
+    const messageCount = 240
+    const markup = await renderScroller(
+      createSession({
+        status: 'idle',
+        messages: Array.from({ length: messageCount }, (_, index) =>
+          createMessage({
+            id: `message-${index + 1}`,
+            content: `Message ${index + 1}`,
+            createdAt: 1710000000000 + index,
+            updatedAt: 1710000000000 + index
+          })
+        )
+      })
+    )
+
+    const renderedMessageRows = markup.match(/data-message-id="message-\d+"/g) ?? []
+
+    expect(renderedMessageRows.length).toBeLessThanOrEqual(100)
+    expect(markup).toContain(`data-message-id="message-${messageCount}"`)
+  })
+})
+
 describe('WorkspaceMessageScroller Run Marks render', () => {
   it('passes the presented conversation to Run Marks', async () => {
     const oneRun = await renderScroller(

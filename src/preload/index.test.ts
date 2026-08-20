@@ -162,7 +162,9 @@ type PreloadApi = {
       theme: 'light' | 'dark'
       followsSystem: boolean
     }) => void
-    announceWindowFindReady?: () => unknown
+    announceWindowFindReady?: (
+      listener?: (preparation: { requestId: number; complete: () => void }) => void
+    ) => unknown
     onCloseActivePane: (listener: () => void) => () => void
   }
 }
@@ -963,6 +965,25 @@ describe('preload bridge — window find IPC channels', () => {
     dispose?.()
 
     expect(sendMock).toHaveBeenNthCalledWith(2, 'shortcut:window-find-unready')
+  })
+
+  it('delivers find preparation requests and acknowledges completion to main', () => {
+    const listener = vi.fn()
+    const dispose = api.window.announceWindowFindReady?.(listener) as (() => void) | undefined
+    const wrappedListener = onMock.mock.calls.find(
+      ([channel]) => channel === 'window:find-prepare'
+    )?.[1] as ((event: unknown, payload: unknown) => void) | undefined
+
+    wrappedListener?.({}, { requestId: 42 })
+    expect(listener).toHaveBeenCalledTimes(1)
+
+    const preparation = listener.mock.calls[0]?.[0]
+    preparation.complete()
+    preparation.complete()
+    expect(sendMock).toHaveBeenCalledWith('window:find-prepared', { requestId: 42 })
+
+    dispose?.()
+    expect(removeListenerMock).toHaveBeenCalledWith('window:find-prepare', expect.any(Function))
   })
 
   it('forwards renderer theme changes to main as a typed appearance payload', () => {

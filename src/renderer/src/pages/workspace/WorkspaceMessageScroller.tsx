@@ -29,6 +29,7 @@ import {
   useRef,
   useState,
   type ComponentProps,
+  type MouseEvent as ReactMouseEvent,
   type ReactNode
 } from 'react'
 import { ArrowDownIcon } from 'lucide-react'
@@ -87,6 +88,7 @@ import { WorkspaceElicitationCard } from './WorkspaceElicitationCard'
 import { WorkspaceSubagentMessageRow } from './WorkspaceSubagentMessageRow'
 import { getNotebookRunIdFromActivity } from './workspace-tool-activity-details'
 import { setWorkspacePresentationRevealing } from './workspace-presentation-revealing'
+import type { WindowFindPreparation } from '../../../../shared/window-controls'
 
 type WorkspaceMessageScrollerProps = {
   activeSession: ChatSession | undefined
@@ -141,6 +143,19 @@ type VisibleMessageSnapshot = {
   messageIds: Set<string>
 }
 
+type TranscriptWindowState = {
+  scopeId: string | undefined
+  startIndex: number
+}
+
+type PendingTranscriptPrepend = {
+  scopeId: string | undefined
+  scrollHeight: number
+  scrollTop: number
+  complete?: () => void
+  scrollToStart?: boolean
+}
+
 const VisibleMessageSnapshotCommit = ({
   scopeId,
   messageIdsKey,
@@ -162,6 +177,7 @@ const SCROLL_TO_FIRST_MESSAGE_MIN_HEIGHT_VIEWPORTS = 2
 const SCROLL_TO_FIRST_MESSAGE_MIN_PROGRESS = 0.1
 const SCROLL_TO_FIRST_MESSAGE_MIN_DISTANCE_VIEWPORTS = 1
 const SCROLL_TO_FIRST_MESSAGE_IDLE_TIMEOUT_MS = 3000
+const INITIAL_TRANSCRIPT_ITEM_COUNT = 100
 // How long a "no longer available" mention notice stays visible before auto-dismissing.
 const MENTION_NOTICE_TIMEOUT_MS = 3000
 
@@ -372,6 +388,8 @@ const WorkspaceMessageScrollerImpl = ({
   const scrollToFirstMessageButtonRef = useRef<HTMLButtonElement | null>(null)
   const previousMessageScrollerScrollTopRef = useRef(0)
   const scrollToFirstMessageHideTimeoutRef = useRef<number | undefined>(undefined)
+  const pendingTranscriptPrependRef = useRef<PendingTranscriptPrepend | undefined>(undefined)
+  const [transcriptWindowState, setTranscriptWindowState] = useState<TranscriptWindowState>()
   const [scrollThresholdAllowsFirstMessage, setScrollThresholdAllowsFirstMessage] = useState(false)
   const handleMessageScrollerViewportRef = useCallback((node: HTMLDivElement | null): void => {
     messageScrollerViewportRef.current = node
@@ -383,14 +401,12 @@ const WorkspaceMessageScrollerImpl = ({
   const currentPresentationScopeId = currentSessionId
     ? JSON.stringify([currentSessionId, activeConversationFrame?.activeBranchId ?? 'legacy'])
     : undefined
+  const currentPresentationScopeIdRef = useRef(currentPresentationScopeId)
+  useLayoutEffect(() => {
+    currentPresentationScopeIdRef.current = currentPresentationScopeId
+  }, [currentPresentationScopeId])
   const artifactVisibility = useWorkspaceArtifactVisibility(activeSession)
   const handoffEvents = useHandoffLifecycleEvents(handoffLifecycleSource, currentSessionId)
-  // The whole-window find bar is an Electron overlay owned by main; the Workspace only needs to tell
-  // main it is mounted and searchable so Cmd/Ctrl+F is intercepted (and re-arm UNREADY on unmount).
-  useEffect(() => {
-    const stop = window.api?.window?.announceWindowFindReady?.()
-    return () => stop?.()
-  }, [])
   const loadReviewsForSession = useReviewStore((state) => state.loadReviewsForSession)
   const reviewLoadError = useReviewStore((state) =>
     selectProjectSessionReviewLoadError(
@@ -542,10 +558,106 @@ const WorkspaceMessageScrollerImpl = ({
     presentationBarrierIndex >= 0
       ? conversationItems.slice(0, presentationBarrierIndex + 1)
       : conversationItems
+  const defaultTranscriptWindowStart = Math.max(
+    0,
+    presentedConversationItems.length - INITIAL_TRANSCRIPT_ITEM_COUNT
+  )
+  const transcriptWindowStart =
+    transcriptWindowState && transcriptWindowState.scopeId === currentPresentationScopeId
+      ? Math.min(transcriptWindowState.startIndex, defaultTranscriptWindowStart)
+      : defaultTranscriptWindowStart
+  const transcriptWindowStartRef = useRef(transcriptWindowStart)
+  useLayoutEffect(() => {
+    transcriptWindowStartRef.current = transcriptWindowStart
+  }, [transcriptWindowStart])
+  const renderedConversationItems = conversationItems.slice(transcriptWindowStart)
+  const renderedPresentedConversationItems = presentedConversationItems.slice(transcriptWindowStart)
+  const loadEarlierTranscriptItems = useCallback((): void => {
+    if (transcriptWindowStart <= 0) return
+    const viewport = messageScrollerViewportRef.current
+    pendingTranscriptPrependRef.current = {
+      scopeId: currentPresentationScopeId,
+      scrollHeight: viewport?.scrollHeight ?? 0,
+      scrollTop: viewport?.scrollTop ?? 0
+    }
+    setTranscriptWindowState({
+      scopeId: currentPresentationScopeId,
+      startIndex: Math.max(0, transcriptWindowStart - INITIAL_TRANSCRIPT_ITEM_COUNT)
+    })
+  }, [currentPresentationScopeId, transcriptWindowStart])
+  const revealTranscriptMessage = useCallback(
+    (messageId: string): void => {
+      const targetIndex = presentedConversationItems.findIndex(
+        (item) => item.type === 'message' && item.message.id === messageId
+      )
+      if (targetIndex < 0 || targetIndex >= transcriptWindowStart) return
+      setTranscriptWindowState({
+        scopeId: currentPresentationScopeId,
+        startIndex: targetIndex
+      })
+    },
+    [currentPresentationScopeId, presentedConversationItems, transcriptWindowStart]
+  )
+  const handleScrollToFirstMessage = useCallback(
+    (event: ReactMouseEvent<HTMLButtonElement>): void => {
+      if (transcriptWindowStart <= 0) return
+      event.preventDefault()
+      const viewport = messageScrollerViewportRef.current
+      pendingTranscriptPrependRef.current = {
+        scopeId: currentPresentationScopeId,
+        scrollHeight: viewport?.scrollHeight ?? 0,
+        scrollTop: viewport?.scrollTop ?? 0,
+        scrollToStart: true
+      }
+      setTranscriptWindowState({ scopeId: currentPresentationScopeId, startIndex: 0 })
+    },
+    [currentPresentationScopeId, transcriptWindowStart]
+  )
+  const prepareTranscriptForFind = useCallback((preparation: WindowFindPreparation): void => {
+    const startIndex = transcriptWindowStartRef.current
+    if (startIndex <= 0) {
+      preparation.complete()
+      return
+    }
+
+    const viewport = messageScrollerViewportRef.current
+    const scopeId = currentPresentationScopeIdRef.current
+    pendingTranscriptPrependRef.current = {
+      scopeId,
+      scrollHeight: viewport?.scrollHeight ?? 0,
+      scrollTop: viewport?.scrollTop ?? 0,
+      complete: preparation.complete
+    }
+    setTranscriptWindowState({ scopeId, startIndex: 0 })
+  }, [])
+  // Main delays Electron's native find until this callback has exposed the complete active transcript
+  // and the layout effect below acknowledges the committed DOM. The preload helper owns request ids.
+  useEffect(() => {
+    const stop = window.api?.window?.announceWindowFindReady?.(prepareTranscriptForFind)
+    return () => stop?.()
+  }, [prepareTranscriptForFind])
+  useLayoutEffect(() => {
+    const pending = pendingTranscriptPrependRef.current
+    if (!pending) return
+    if (pending.scopeId !== currentPresentationScopeId) {
+      pendingTranscriptPrependRef.current = undefined
+      pending.complete?.()
+      return
+    }
+
+    const viewport = messageScrollerViewportRef.current
+    if (viewport) {
+      viewport.scrollTop = pending.scrollToStart
+        ? 0
+        : pending.scrollTop + Math.max(0, viewport.scrollHeight - pending.scrollHeight)
+    }
+    pendingTranscriptPrependRef.current = undefined
+    pending.complete?.()
+  }, [currentPresentationScopeId, transcriptWindowStart])
   // Brand-new conversation (nothing presented, no resume in flight): invite the first prompt with
   // a centered placeholder banner over the empty transcript area.
   const showEmptyConversationBanner = presentedConversationItems.length === 0 && !isResumingSession
-  const visibleMessageIds = presentedConversationItems.flatMap((item) =>
+  const visibleMessageIds = renderedPresentedConversationItems.flatMap((item) =>
     item.type === 'message' ? [item.message.id] : []
   )
   const visibleMessageIdsKey = JSON.stringify(visibleMessageIds)
@@ -1026,6 +1138,8 @@ const WorkspaceMessageScrollerImpl = ({
           <WorkspaceRunMarks
             items={presentedConversationItems}
             viewport={messageScrollerViewport}
+            transcriptWindowStart={transcriptWindowStart}
+            onRevealMessage={revealTranscriptMessage}
           />
           <div
             aria-hidden="true"
@@ -1042,6 +1156,23 @@ const WorkspaceMessageScrollerImpl = ({
               ref={messageScrollerContentRef}
               className="mx-auto w-full max-w-4xl gap-0 px-4 pb-[56px]"
             >
+              {transcriptWindowStart > 0 ? (
+                <MessageScrollerItem
+                  messageId={`transcript-history-${currentSessionId ?? 'unknown'}`}
+                  className="min-w-0"
+                >
+                  <div className="flex justify-center px-4 pb-2 pt-3 md:px-6">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={loadEarlierTranscriptItems}
+                    >
+                      {t('Load earlier messages')}
+                    </Button>
+                  </div>
+                </MessageScrollerItem>
+              ) : null}
               {reviewLoadError ? (
                 <MessageScrollerItem
                   messageId={`review-load-error-${currentSessionId ?? 'unknown'}`}
@@ -1073,7 +1204,8 @@ const WorkspaceMessageScrollerImpl = ({
                 onCommit={handleVisibleMessageSnapshotCommit}
               />
               {/* Messages and tool activities share one sorted transcript timeline. */}
-              {conversationItems.map((item, itemIndex) => {
+              {renderedConversationItems.map((item, windowItemIndex) => {
+                const itemIndex = transcriptWindowStart + windowItemIndex
                 // Only later text messages stay behind the presentation barrier; tool,
                 // activity, and other non-message rows render in real time so their
                 // running state stays visible while the reply paces above them.
@@ -1378,6 +1510,7 @@ const WorkspaceMessageScrollerImpl = ({
               tabIndex={-1}
               size="default"
               className="z-20 min-h-11 gap-1 rounded-full border-transparent bg-bg-000 px-4 text-sm shadow-card transition-[translate,scale,opacity] hover:bg-bg-200 data-[direction=start]:top-3 data-[revealed=false]:pointer-events-none data-[revealed=false]:-translate-y-2 data-[revealed=false]:opacity-0 motion-reduce:transition-none"
+              onClick={handleScrollToFirstMessage}
             >
               <ArrowDownIcon aria-hidden="true" />
               <span>{t('First message')}</span>

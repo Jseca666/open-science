@@ -372,6 +372,43 @@ describe('WorkspaceRunMarks interaction', () => {
     expect(scrollTo).toHaveBeenCalledWith({ top: 800, behavior: 'smooth' })
   })
 
+  it('reveals a run outside the transcript window before scrolling to it', () => {
+    appendMessageTarget(viewport, 'prompt-2', 600)
+    const scrollTo = vi.fn()
+    viewport.scrollTo = scrollTo
+    const items = [
+      createMessageItem({ id: 'prompt-1', content: 'Hidden prompt' }, 0),
+      createMessageItem({ id: 'prompt-2', content: 'Visible prompt' }, 1)
+    ]
+    const onRevealMessage = vi.fn((messageId: string) => {
+      expect(messageId).toBe('prompt-1')
+      appendMessageTarget(viewport, 'prompt-1', 120)
+    })
+
+    const { rerender } = render(
+      <WorkspaceRunMarks
+        viewport={viewport}
+        items={items}
+        transcriptWindowStart={1}
+        onRevealMessage={onRevealMessage}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: /Go to run 1/u }))
+    expect(onRevealMessage).toHaveBeenCalledTimes(1)
+    expect(scrollTo).not.toHaveBeenCalled()
+
+    rerender(
+      <WorkspaceRunMarks
+        viewport={viewport}
+        items={items}
+        transcriptWindowStart={0}
+        onRevealMessage={onRevealMessage}
+      />
+    )
+    expect(scrollTo).toHaveBeenCalledWith({ top: 12, behavior: 'smooth' })
+  })
+
   it('tracks the last mark above the viewport reading boundary', () => {
     appendMessageTarget(viewport, 'prompt-1', 80)
     appendMessageTarget(viewport, 'prompt-2', 125)

@@ -851,9 +851,17 @@ const api: OpenScienceAPI = {
     findInPage: (request) => electronRendererContracts.send('window.findInPage', request),
     clearFind: () => electronRendererContracts.send('window.clearFind'),
     // The Workspace announces it is mounted and searchable so main knows whether to intercept
-    // Cmd/Ctrl+F. Returns a teardown that announces UNREADY on unmount.
-    announceWindowFindReady: () =>
-      announceWindowFindReady({ send: (channel) => ipcRenderer.send(channel) }),
+    // Cmd/Ctrl+F. Before native find runs, the optional listener can expose deferred transcript rows
+    // and acknowledge completion without handling raw IPC request ids itself.
+    announceWindowFindReady: (listener) =>
+      announceWindowFindReady(
+        {
+          on: (channel, prepareListener) => onIpcMessage(channel, prepareListener),
+          send: (channel, payload) =>
+            payload === undefined ? ipcRenderer.send(channel) : ipcRenderer.send(channel, payload)
+        },
+        listener
+      ),
     onFindInPageResult: (listener) =>
       electronRendererContracts.subscribe('window.onFindInPageResult', listener),
     // Overlay-only surface: main signals the bar was shown (focus + restore remembered query), and the

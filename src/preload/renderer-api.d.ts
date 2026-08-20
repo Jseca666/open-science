@@ -386,6 +386,7 @@ import type {
   CloseConfirmRequest,
   CloseConfirmResponse,
   WindowFindAppearance,
+  WindowFindPreparation,
   WindowFindRequest,
   WindowFindResult
 } from '../shared/window-controls'
@@ -1012,8 +1013,11 @@ export interface OpenScienceAPI {
     onCloseActivePane(listener: () => void): RemoveListener
     findInPage?(request: WindowFindRequest): void
     clearFind?(): void
-    // Announces the Workspace is mounted (READY) and returns a teardown that announces UNREADY.
-    announceWindowFindReady?(): RemoveListener
+    // Announces the Workspace is mounted (READY). The optional listener exposes deferred transcript
+    // rows and calls complete() after React commits them; teardown announces UNREADY.
+    announceWindowFindReady?(
+      listener?: (preparation: WindowFindPreparation) => void
+    ): RemoveListener
     onFindInPageResult?(listener: AcpListener<WindowFindResult>): RemoveListener
     // Overlay-only: main signals the bar was shown; the overlay asks main to hide it.
     onShowWindowFind?(listener: AcpListener<WindowFindAppearance>): RemoveListener

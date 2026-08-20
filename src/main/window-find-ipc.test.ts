@@ -4,6 +4,8 @@ import { registerFindOverlayOwner } from './find-overlay-registry'
 import {
   WINDOW_FIND_CLEAR_CHANNEL,
   WINDOW_FIND_CLOSE_CHANNEL,
+  WINDOW_FIND_PREPARED_CHANNEL,
+  WINDOW_FIND_PREPARE_CHANNEL,
   WINDOW_FIND_REQUEST_CHANNEL,
   WINDOW_FIND_RESULT_CHANNEL,
   type WindowFindResult
@@ -29,6 +31,7 @@ type FindInPageOptions = { findNext: boolean; forward: boolean; matchCase: boole
 type TargetWindow = {
   webContents: {
     findInPage: Mock<(text: string, options: FindInPageOptions) => number>
+    send: Mock<(channel: string, payload: { requestId: number }) => void>
     stopFindInPage: Mock<(action: 'clearSelection') => void>
     on: Mock<
       (
@@ -50,6 +53,7 @@ const createTargetWindow = (): TargetWindow => {
   const foundListeners: Array<(event: unknown, result: FoundInPageResult) => void> = []
   const webContents = {
     findInPage: vi.fn<(text: string, options: FindInPageOptions) => number>(() => 17),
+    send: vi.fn<(channel: string, payload: { requestId: number }) => void>(),
     stopFindInPage: vi.fn<(action: 'clearSelection') => void>(),
     on: vi.fn<
       (
@@ -85,6 +89,13 @@ describe('window find IPC', () => {
       { sender: overlay },
       { requestId: 1, text: 'protein', findNext: true, forward: true }
     )
+
+    expect(target.webContents.findInPage).not.toHaveBeenCalled()
+    expect(target.webContents.send).toHaveBeenCalledWith(WINDOW_FIND_PREPARE_CHANNEL, {
+      requestId: 1
+    })
+
+    handlers.get(WINDOW_FIND_PREPARED_CHANNEL)!({ sender: target.webContents }, { requestId: 1 })
     target.emitFoundInPage({ requestId: 17, activeMatchOrdinal: 1, matches: 4, finalUpdate: true })
 
     // The search runs against the MAIN window's webContents, never the overlay's.
@@ -112,10 +123,12 @@ describe('window find IPC', () => {
       { sender: overlay },
       { requestId: 1, text: 'protein', findNext: true, forward: true }
     )
+    handlers.get(WINDOW_FIND_PREPARED_CHANNEL)!({ sender: target.webContents }, { requestId: 1 })
     handlers.get(WINDOW_FIND_REQUEST_CHANNEL)!(
       { sender: overlay },
       { requestId: 2, text: 'variant', findNext: true, forward: true }
     )
+    handlers.get(WINDOW_FIND_PREPARED_CHANNEL)!({ sender: target.webContents }, { requestId: 2 })
     target.emitFoundInPage({ requestId: 17, activeMatchOrdinal: 1, matches: 4, finalUpdate: true })
     target.emitFoundInPage({ requestId: 18, activeMatchOrdinal: 1, matches: 2, finalUpdate: true })
 
@@ -126,6 +139,31 @@ describe('window find IPC', () => {
       matches: 2,
       finalUpdate: true
     })
+  })
+
+  it('ignores preparation acknowledgements for a superseded query', () => {
+    const target = createTargetWindow()
+    const overlay = createOverlay()
+    registerWindowFindIpcHandlers({ resolveMainWindow: () => target })
+
+    handlers.get(WINDOW_FIND_REQUEST_CHANNEL)!(
+      { sender: overlay },
+      { requestId: 1, text: 'protein', findNext: true, forward: true }
+    )
+    handlers.get(WINDOW_FIND_REQUEST_CHANNEL)!(
+      { sender: overlay },
+      { requestId: 2, text: 'variant', findNext: true, forward: true }
+    )
+
+    handlers.get(WINDOW_FIND_PREPARED_CHANNEL)!({ sender: target.webContents }, { requestId: 1 })
+    expect(target.webContents.findInPage).not.toHaveBeenCalled()
+
+    handlers.get(WINDOW_FIND_PREPARED_CHANNEL)!({ sender: target.webContents }, { requestId: 2 })
+    expect(target.webContents.findInPage).toHaveBeenCalledTimes(1)
+    expect(target.webContents.findInPage).toHaveBeenCalledWith(
+      'variant',
+      expect.objectContaining({ findNext: true, forward: true })
+    )
   })
 
   it('clears the search selection on the MAIN window when the overlay closes', () => {

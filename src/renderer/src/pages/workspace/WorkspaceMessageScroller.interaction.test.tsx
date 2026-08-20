@@ -168,7 +168,10 @@ const createSessionSubagentsPreviewItem = vi.fn(
     selectedAgentFrameId
   })
 )
-const announceWindowFindReady = vi.fn(() => () => undefined)
+type FindPreparation = { requestId: number; complete: () => void }
+const announceWindowFindReady = vi.fn<
+  (listener?: (preparation: FindPreparation) => void) => () => void
+>(() => () => undefined)
 
 vi.mock('@/stores/preview-workbench-store', () => ({
   usePreviewWorkbenchStore: {
@@ -375,6 +378,168 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     expect(userRow?.getAttribute('data-scroll-anchor')).toBe('true')
     const agentRow = content?.querySelector('[data-message-id="reply-structure"]')
     expect(agentRow?.getAttribute('data-scroll-anchor')).toBeNull()
+  })
+
+  it('loads earlier transcript messages in bounded chunks without moving the viewport', async () => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const messages = Array.from({ length: 240 }, (_, index) =>
+      createMessage({
+        id: `window-message-${index + 1}`,
+        content: `Message ${index + 1}`,
+        createdAt: 1710000000000 + index,
+        updatedAt: 1710000000000 + index
+      })
+    )
+
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller
+          activeSession={createSession({ status: 'idle', messages })}
+          onSendEditedMessage={vi.fn()}
+        />
+      )
+    })
+
+    const messageRows = (): NodeListOf<HTMLElement> =>
+      container.querySelectorAll('[data-message-id^="window-message-"]')
+    const viewport = container.querySelector<HTMLElement>(
+      '[data-testid="message-scroller-viewport"]'
+    )
+    Object.defineProperties(viewport, {
+      scrollHeight: {
+        configurable: true,
+        get: () => messageRows().length * 10
+      },
+      scrollTop: { configurable: true, writable: true, value: 320 }
+    })
+
+    expect(messageRows()).toHaveLength(100)
+    expect(container.querySelector('[data-message-id="window-message-140"]')).toBeNull()
+    expect(container.querySelector('[data-message-id="window-message-141"]')).not.toBeNull()
+
+    const firstLoad = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Load earlier messages'
+    )
+    expect(firstLoad).not.toBeUndefined()
+    await act(async () => firstLoad?.click())
+
+    expect(messageRows()).toHaveLength(200)
+    expect(container.querySelector('[data-message-id="window-message-40"]')).toBeNull()
+    expect(container.querySelector('[data-message-id="window-message-41"]')).not.toBeNull()
+    expect(viewport?.scrollTop).toBe(1320)
+
+    const secondLoad = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Load earlier messages'
+    )
+    await act(async () => secondLoad?.click())
+
+    expect(messageRows()).toHaveLength(240)
+    expect(container.querySelector('[data-message-id="window-message-1"]')).not.toBeNull()
+    expect(viewport?.scrollTop).toBe(1720)
+    expect(
+      Array.from(container.querySelectorAll('button')).find(
+        (button) => button.textContent === 'Load earlier messages'
+      )
+    ).toBeUndefined()
+  })
+
+  it('commits the complete transcript before acknowledging native find preparation', async () => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const messages = Array.from({ length: 240 }, (_, index) =>
+      createMessage({
+        id: `find-message-${index + 1}`,
+        content: `Find target ${index + 1}`,
+        createdAt: 1710000000000 + index,
+        updatedAt: 1710000000000 + index
+      })
+    )
+
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller
+          activeSession={createSession({ messages })}
+          onSendEditedMessage={vi.fn()}
+        />
+      )
+    })
+
+    const messageRows = (): Element[] =>
+      Array.from(container.querySelectorAll('[data-message-id^="find-message-"]'))
+    expect(messageRows()).toHaveLength(100)
+
+    const viewport = container.querySelector<HTMLElement>(
+      '[data-testid="message-scroller-viewport"]'
+    )
+    Object.defineProperties(viewport, {
+      scrollHeight: {
+        configurable: true,
+        get: () => messageRows().length * 10
+      },
+      scrollTop: { configurable: true, writable: true, value: 320 }
+    })
+
+    const prepare = announceWindowFindReady.mock.calls.at(-1)?.[0]
+    expect(prepare).toBeTypeOf('function')
+    const complete = vi.fn(() => expect(messageRows()).toHaveLength(240))
+
+    await act(async () => {
+      prepare?.({ requestId: 42, complete })
+    })
+
+    expect(messageRows()).toHaveLength(240)
+    expect(viewport?.scrollTop).toBe(1720)
+    expect(complete).toHaveBeenCalledTimes(1)
+  })
+
+  it('reveals the real first message before scrolling to the transcript start', async () => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const messages = Array.from({ length: 240 }, (_, index) =>
+      createMessage({
+        id: `first-message-${index + 1}`,
+        content: `Message ${index + 1}`,
+        createdAt: 1710000000000 + index,
+        updatedAt: 1710000000000 + index
+      })
+    )
+
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller
+          activeSession={createSession({ status: 'idle', messages })}
+          onSendEditedMessage={vi.fn()}
+        />
+      )
+    })
+
+    const messageRows = (): NodeListOf<HTMLElement> =>
+      container.querySelectorAll('[data-message-id^="first-message-"]')
+    const viewport = container.querySelector<HTMLElement>(
+      '[data-testid="message-scroller-viewport"]'
+    )
+    Object.defineProperties(viewport, {
+      clientHeight: { configurable: true, value: 400 },
+      scrollHeight: { configurable: true, get: () => messageRows().length * 10 },
+      scrollTop: { configurable: true, writable: true, value: 600 }
+    })
+
+    await act(async () => viewport?.dispatchEvent(new Event('scroll', { bubbles: true })))
+    if (viewport) viewport.scrollTop = 599
+    await act(async () => viewport?.dispatchEvent(new Event('scroll', { bubbles: true })))
+
+    const firstMessageButton = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Scroll to first message"]'
+    )
+    expect(firstMessageButton).not.toBeNull()
+    expect(messageRows()).toHaveLength(100)
+
+    await act(async () => firstMessageButton?.click())
+
+    expect(messageRows()).toHaveLength(240)
+    expect(container.querySelector('[data-message-id="first-message-1"]')).not.toBeNull()
+    expect(viewport?.scrollTop).toBe(0)
   })
 
   it('renders later tools in real time while the assistant reply is still pacing', async () => {

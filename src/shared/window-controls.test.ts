@@ -5,6 +5,8 @@ import {
   CLOSE_ACTIVE_PANE_READY_CHANNEL,
   CLOSE_ACTIVE_PANE_UNREADY_CHANNEL,
   WINDOW_FIND_READY_CHANNEL,
+  WINDOW_FIND_PREPARE_CHANNEL,
+  WINDOW_FIND_PREPARED_CHANNEL,
   WINDOW_FIND_UNREADY_CHANNEL,
   announceWindowFindReady,
   isWindowFindAppearance,
@@ -169,5 +171,34 @@ describe('announceWindowFindReady', () => {
     unsubscribe()
 
     expect(send).toHaveBeenCalledWith(WINDOW_FIND_UNREADY_CHANNEL)
+  })
+
+  it('exposes one completion callback for each validated find preparation request', () => {
+    const send = vi.fn()
+    const removeListener = vi.fn()
+    let prepareListener: ((payload: unknown) => void) | undefined
+    const on = vi.fn((channel: string, listener: (payload: unknown) => void) => {
+      expect(channel).toBe(WINDOW_FIND_PREPARE_CHANNEL)
+      prepareListener = listener
+      return removeListener
+    })
+    const onPrepare = vi.fn()
+
+    const unsubscribe = announceWindowFindReady({ on, send }, onPrepare)
+    prepareListener?.({ requestId: 42 })
+
+    expect(onPrepare).toHaveBeenCalledTimes(1)
+    const preparation = onPrepare.mock.calls[0]?.[0]
+    preparation.complete()
+    preparation.complete()
+    expect(send).toHaveBeenCalledWith(WINDOW_FIND_PREPARED_CHANNEL, { requestId: 42 })
+    expect(send).toHaveBeenCalledTimes(2)
+
+    prepareListener?.({ requestId: 'invalid' })
+    expect(onPrepare).toHaveBeenCalledTimes(1)
+
+    unsubscribe()
+    expect(removeListener).toHaveBeenCalledTimes(1)
+    expect(send).toHaveBeenLastCalledWith(WINDOW_FIND_UNREADY_CHANNEL)
   })
 })

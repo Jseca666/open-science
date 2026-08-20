@@ -31,6 +31,13 @@ export const WINDOW_FIND_REQUEST_CHANNEL = 'window:find-in-page'
 export const WINDOW_FIND_CLEAR_CHANNEL = 'window:clear-find-in-page'
 export const WINDOW_FIND_RESULT_CHANNEL = 'window:find-in-page-result'
 
+// Before native page-find runs, main asks the Workspace to expose any transcript rows that are
+// intentionally outside the initial render window. The renderer acknowledges only after React has
+// committed those rows, so Electron searches the complete active transcript rather than the current
+// DOM window.
+export const WINDOW_FIND_PREPARE_CHANNEL = 'window:find-prepare'
+export const WINDOW_FIND_PREPARED_CHANNEL = 'window:find-prepared'
+
 // Main -> overlay: the find bar was just shown — apply the main renderer's resolved appearance,
 // focus the field, and re-run the remembered query. `followsSystem` lets the separate file:// overlay
 // live-follow OS changes without trying to read the renderer's origin-scoped localStorage.
@@ -60,6 +67,14 @@ export type WindowFindResult = {
   activeMatchOrdinal: number
   matches: number
   finalUpdate: boolean
+}
+
+export type WindowFindPrepareRequest = {
+  requestId: number
+}
+
+export type WindowFindPreparation = WindowFindPrepareRequest & {
+  complete: () => void
 }
 
 export type WindowFindAppearance = {
@@ -99,15 +114,44 @@ export const subscribeCloseActivePane = (
   }
 }
 
+type WindowFindReadyBridge = {
+  on?: (channel: string, listener: (payload: unknown) => void) => () => void
+  send: (channel: string, payload?: WindowFindPrepareRequest) => void
+}
+
+const isWindowFindPrepareRequest = (value: unknown): value is WindowFindPrepareRequest => {
+  if (!value || typeof value !== 'object') return false
+  return Number.isSafeInteger((value as Partial<WindowFindPrepareRequest>).requestId)
+}
+
 // In the overlay-window architecture main opens the find bar itself (no OPEN message reaches the
-// renderer), so the Workspace only needs to tell main that it is mounted and searchable. This announces
-// READY on mount and UNREADY on teardown, so main can keep intercepting Cmd/Ctrl+F only while a
-// searchable Workspace is actually present.
+// renderer). The Workspace announces that it is searchable and, when requested, exposes hidden
+// transcript rows before acknowledging that native find may start. Keeping the acknowledgement behind
+// the completion callback prevents renderer callers from inventing or mismatching request ids.
 export const announceWindowFindReady = (
-  bridge: Pick<CloseActivePaneBridge, 'send'>
+  bridge: WindowFindReadyBridge,
+  onPrepare?: (preparation: WindowFindPreparation) => void
 ): (() => void) => {
+  const removePrepareListener =
+    onPrepare && bridge.on
+      ? bridge.on(WINDOW_FIND_PREPARE_CHANNEL, (payload) => {
+          if (!isWindowFindPrepareRequest(payload)) return
+          let completed = false
+          onPrepare({
+            requestId: payload.requestId,
+            complete: () => {
+              if (completed) return
+              completed = true
+              bridge.send(WINDOW_FIND_PREPARED_CHANNEL, payload)
+            }
+          })
+        })
+      : undefined
   bridge.send(WINDOW_FIND_READY_CHANNEL)
-  return () => bridge.send(WINDOW_FIND_UNREADY_CHANNEL)
+  return () => {
+    removePrepareListener?.()
+    bridge.send(WINDOW_FIND_UNREADY_CHANNEL)
+  }
 }
 
 // The subset of Electron's before-input-event Input that the chord test needs. Kept structural so the
