@@ -40,12 +40,10 @@ const defaultEnsureWritable = async (path: string): Promise<void> => {
 const isLegacyConfigDataRoot = (
   configRoot: string,
   dataFolderName: string,
-  homeDataRoot: string,
   pathExists: (path: string) => boolean
 ): boolean =>
   RELOCATABLE_DATA_DIRS.some((directory) => pathExists(join(configRoot, directory))) &&
-  !pathExists(join(configRoot, dataFolderName)) &&
-  !pathExists(homeDataRoot)
+  !pathExists(join(configRoot, dataFolderName))
 
 const hasHistoricalFootprint = (
   configRoot: string,
@@ -76,7 +74,7 @@ const prepareInitialDataRoot = async ({
   ensureWritable = defaultEnsureWritable
 }: PrepareInitialDataRootOptions): Promise<string | undefined> => {
   if (settingsDataRoot?.trim()) return settingsDataRoot
-  if (isLegacyConfigDataRoot(configRoot, dataFolderName, homeDataRoot, pathExists)) return undefined
+  if (isLegacyConfigDataRoot(configRoot, dataFolderName, pathExists)) return undefined
 
   const historical = hasHistoricalFootprint(
     configRoot,

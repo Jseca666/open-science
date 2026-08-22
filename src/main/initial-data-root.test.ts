@@ -91,6 +91,17 @@ describe('prepareInitialDataRoot', () => {
     expect(input.persistDataRoot).not.toHaveBeenCalled()
   })
 
+  it('does not let an existing home folder hide live legacy config-root data', async () => {
+    const input = options()
+    input.pathExists.mockImplementation(
+      (path) => path === '/config/artifacts' || path === input.homeDataRoot
+    )
+
+    await expect(prepareInitialDataRoot(input)).resolves.toBeUndefined()
+    expect(input.ensureWritable).not.toHaveBeenCalled()
+    expect(input.persistDataRoot).not.toHaveBeenCalled()
+  })
+
   it('falls back to the former home default when the install-drive candidate is not writable', async () => {
     const input = options()
     input.ensureWritable
