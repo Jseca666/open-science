@@ -2131,7 +2131,6 @@
   "Updated {{time}}": "Обновлено {{time}}",
   "Updates existing": "Обновляет существующие",
   "Updating database…": "Обновление базы данных…",
-  "Updating the notebook environment… {{percent}}%": "Обновление среды Notebook… {{percent}}%",
   "Upload": "Загрузить",
   "Upload a SKILL.md or text file": "Загрузите SKILL.md или текстовый файл",
   "Upload failed": "Загрузка не удалась",

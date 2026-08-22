@@ -2026,7 +2026,6 @@
   "Updated {{time}}": "{{time}} に更新されました",
   "Updates existing": "既存のアップデート",
   "Updating database…": "データベースを更新しています…",
-  "Updating the notebook environment… {{percent}}%": "Notebook 環境を更新しています… {{percent}}%",
   "Upload": "アップロード",
   "Upload a SKILL.md or text file": "SKILL.md またはテキスト ファイルをアップロードします",
   "Upload failed": "アップロードに失敗しました",

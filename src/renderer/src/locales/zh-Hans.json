@@ -2097,7 +2097,6 @@
   "Updated {{time}}": "更新于 {{time}}",
   "Updates existing": "将更新现有技能",
   "Updating database…": "正在更新数据库…",
-  "Updating the notebook environment… {{percent}}%": "正在更新 Notebook 环境…… {{percent}}%",
   "Upload": "上传",
   "Upload a SKILL.md or text file": "上传 SKILL.md 或文本文件",
   "Upload failed": "上传失败",

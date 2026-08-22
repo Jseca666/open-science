@@ -280,7 +280,11 @@ vi.mock('@/pages/home/HomePage', () => ({
   }
 }))
 vi.mock('@/pages/onboarding/OnboardingWizard', () => ({
-  OnboardingWizard: (): React.JSX.Element => <div data-testid="onboarding-page" />
+  OnboardingWizard: ({
+    backgroundStatus
+  }: {
+    backgroundStatus?: React.ReactNode
+  }): React.JSX.Element => <div data-testid="onboarding-page">{backgroundStatus}</div>
 }))
 vi.mock('@/pages/settings/ConnectorApprovalDialog', () => ({
   ConnectorApprovalDialog: (props: { active?: boolean }): React.JSX.Element => {

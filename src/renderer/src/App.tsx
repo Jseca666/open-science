@@ -556,10 +556,11 @@ const AppContent = (): React.JSX.Element | null => {
 
   if (startupView === 'onboarding') {
     return (
-      <>
-        <EnvStatusBanner ui={envUi} onRetry={() => void retryEnv()} />
-        <OnboardingWizard />
-      </>
+      <OnboardingWizard
+        backgroundStatus={
+          <EnvStatusBanner ui={envUi} onRetry={() => void retryEnv()} placement="inline" />
+        }
+      />
     )
   }
 

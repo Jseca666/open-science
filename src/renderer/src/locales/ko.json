@@ -2037,7 +2037,6 @@
   "Updated {{time}}": "{{time}}에 업데이트됨",
   "Updates existing": "기존 업데이트",
   "Updating database…": "데이터베이스 업데이트 중…",
-  "Updating the notebook environment… {{percent}}%": "Notebook 환경 업데이트 중… {{percent}}%",
   "Upload": "업로드",
   "Upload a SKILL.md or text file": "SKILL.md 또는 텍스트 파일 업로드",
   "Upload failed": "업로드 실패",

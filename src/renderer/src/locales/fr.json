@@ -2120,7 +2120,6 @@
   "Updated {{time}}": "Mise à jour {{time}}",
   "Updates existing": "Mises à jour existantes",
   "Updating database…": "Mise à jour de la base de données…",
-  "Updating the notebook environment… {{percent}}%": "Mise à jour de l'environnement Notebook… {{percent}}%",
   "Upload": "Téléverser",
   "Upload a SKILL.md or text file": "Téléversez un fichier SKILL.md ou un fichier texte",
   "Upload failed": "Échec du téléversement",

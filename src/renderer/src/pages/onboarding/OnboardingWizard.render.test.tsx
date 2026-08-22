@@ -51,6 +51,19 @@ describe('OnboardingWizard flow', () => {
     expect(layout?.className).toContain('md:grid-cols-[240px_minmax(0,1fr)]')
   })
 
+  it('places background preparation beside the onboarding explanation', async () => {
+    readyClaudeState()
+
+    await act(async () => {
+      root.render(<OnboardingWizard backgroundStatus={<span data-testid="background-status" />} />)
+    })
+
+    const introduction = container.querySelector(
+      '[aria-labelledby="onboarding-introduction-title"]'
+    )
+    expect(introduction?.querySelector('[data-testid="background-status"]')).not.toBeNull()
+  })
+
   it('shows only Agent and Model decisions, then completes after provider validation', async () => {
     readyClaudeState()
 

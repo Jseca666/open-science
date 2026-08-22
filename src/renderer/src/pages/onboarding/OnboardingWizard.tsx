@@ -1,5 +1,5 @@
 import { Check } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Card } from '@/components/ui/card'
@@ -65,7 +65,11 @@ const OnboardingProgress = ({ step }: { step: WizardStep }): React.JSX.Element =
 
 // First-run gate: install a usable agent runtime, then configure and validate a model provider.
 // Storage is resolved before owners start, and Python preparation runs in the background from App.
-const OnboardingWizard = (): React.JSX.Element => {
+const OnboardingWizard = ({
+  backgroundStatus
+}: {
+  backgroundStatus?: ReactNode
+}): React.JSX.Element => {
   const { t } = useTranslation()
   const environmentCheck = useSettingsStore((state) => state.environmentCheck)
   const environmentCheckError = useSettingsStore((state) => state.environmentCheckError)
@@ -123,6 +127,7 @@ const OnboardingWizard = (): React.JSX.Element => {
                 'Choose an agent framework and connect a model. Research tools are prepared automatically in the background.'
               )}
             </p>
+            {backgroundStatus}
             <OnboardingProgress step={step} />
           </section>
 
