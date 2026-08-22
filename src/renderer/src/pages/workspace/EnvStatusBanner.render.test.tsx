@@ -110,6 +110,8 @@ describe('EnvStatusBanner', () => {
       '[data-testid="env-status-banner-retry"]'
     ) as HTMLButtonElement
     expect(button).not.toBeNull()
+    expect(button.className).toContain('h-8')
+    expect(button.className).not.toContain('min-h-11')
     act(() => button.dispatchEvent(new MouseEvent('click', { bubbles: true })))
     expect(retried).toBe(1)
   })

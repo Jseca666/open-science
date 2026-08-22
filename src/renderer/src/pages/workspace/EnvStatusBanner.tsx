@@ -83,7 +83,7 @@ const EnvStatusBanner = ({
           variant="outline"
           data-testid="env-status-banner-retry"
           onClick={onRetry}
-          className="min-h-11 shrink-0 px-3 text-xs"
+          className="shrink-0"
         >
           {t('Retry')}
         </Button>

@@ -139,9 +139,20 @@ const AppContent = (): React.JSX.Element | null => {
   const initEnv = useNotebookEnvStore((state) => state.init)
   const envUi = useNotebookEnvStore((state) => state.ui)
   const didInitializeNotebookEnv = useRef(false)
+  const shouldPreparePythonInBackground = useRef(false)
   const listenForPermissionChanges = usePermissionGrantsStore((state) => state.listen)
   const listenForNotificationChanges = useNotificationInboxStore((state) => state.listen)
   const retryEnv = useNotebookEnvStore((state) => state.retry)
+  const retryEnvironmentPreparation = useCallback(async (): Promise<void> => {
+    const recoveringStatus = useNotebookEnvStore.getState().statusError !== undefined
+    await retryEnv()
+    if (!recoveringStatus || !shouldPreparePythonInBackground.current) return
+
+    const env = useNotebookEnvStore.getState()
+    if (!env.statusError && !env.status.pythonReady && !env.status.provisioning) {
+      await env.provision('python')
+    }
+  }, [retryEnv])
   const openPermissionSession = useCallback(
     (sessionId: string): void => {
       const sessionExists = useSessionStore
@@ -315,8 +326,10 @@ const AppContent = (): React.JSX.Element | null => {
   useEffect(() => {
     if (!isSettingsLoaded || didInitializeNotebookEnv.current) return
     didInitializeNotebookEnv.current = true
+    const shouldPreparePython = onboardingCompletedAt === undefined
+    shouldPreparePythonInBackground.current = shouldPreparePython
     void initEnv().then(() => {
-      if (onboardingCompletedAt !== undefined) return
+      if (!shouldPreparePython) return
       const env = useNotebookEnvStore.getState()
       if (!env.status.pythonReady && !env.status.provisioning && !env.statusError) {
         void env.provision('python')
@@ -558,7 +571,11 @@ const AppContent = (): React.JSX.Element | null => {
     return (
       <OnboardingWizard
         backgroundStatus={
-          <EnvStatusBanner ui={envUi} onRetry={() => void retryEnv()} placement="inline" />
+          <EnvStatusBanner
+            ui={envUi}
+            onRetry={() => void retryEnvironmentPreparation()}
+            placement="inline"
+          />
         }
       />
     )
@@ -614,7 +631,7 @@ const AppContent = (): React.JSX.Element | null => {
         inert={!isBasePresentationActive}
         aria-hidden={isBasePresentationActive ? undefined : true}
       >
-        <EnvStatusBanner ui={envUi} onRetry={() => void retryEnv()} />
+        <EnvStatusBanner ui={envUi} onRetry={() => void retryEnvironmentPreparation()} />
         {sessionPersistence.catalogRecovery.kind !== 'ready' ? (
           <SessionCatalogRecoveryAlert
             recovery={sessionPersistence.catalogRecovery}

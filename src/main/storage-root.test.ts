@@ -22,6 +22,7 @@ const {
   dataFolderName,
   dataRootForParent,
   dataRootForPicked,
+  formerDefaultDataParent,
   initDataRoot,
   isPathInsideOrEqual,
   resolveConfigRoot,
@@ -374,6 +375,7 @@ describe('resolveStorageRoot', () => {
     vi.stubEnv('OPEN_SCIENCE_E2E_STORAGE_ROOT', '/tmp/open-science-certification/storage')
 
     expect(resolveStorageRoot()).toBe(normalize('/tmp/open-science-certification/storage'))
+    expect(formerDefaultDataParent()).toBe(normalize('/tmp/open-science-certification/storage'))
     expect(appMock.getPath).not.toHaveBeenCalled()
   })
 

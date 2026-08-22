@@ -57,6 +57,10 @@ const dataFolderName = (): string => (app.isPackaged ? 'OpenScience' : 'OpenScie
 // at its parent - so this join is the single source of truth for the final path.
 const dataRootForParent = (parent: string): string => join(parent, dataFolderName())
 
+// The parent used before install-drive defaults existed. Certification roots have always overridden
+// the real home directory, so startup compatibility checks must preserve that isolation too.
+const formerDefaultDataParent = (): string => resolveE2eStorageRoot() ?? app.getPath('home')
+
 const defaultDataParent = (): string => {
   const e2eRoot = resolveE2eStorageRoot()
   if (e2eRoot) return e2eRoot
@@ -168,6 +172,7 @@ export {
   dataRootForParent,
   dataRootForPicked,
   computeDefaultDataRoot,
+  formerDefaultDataParent,
   defaultDataParent,
   samePath,
   isPathInsideOrEqual

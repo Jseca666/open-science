@@ -245,7 +245,13 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         { installDatabaseStartupQuitGuard, registerDatabaseStartupIpc },
         { buildStartupDiagnostics },
         { getProjectDbClient },
-        { dataFolderName, dataRootForParent, defaultDataParent, resolveStorageRoot },
+        {
+          dataFolderName,
+          dataRootForParent,
+          defaultDataParent,
+          formerDefaultDataParent,
+          resolveStorageRoot
+        },
         { NSIS_INSTALL_MARKER, prepareInitialDataRoot },
         { SettingsDocumentStore },
         { SettingsRepository },
@@ -297,7 +303,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
           configRoot,
           dataFolderName: dataFolderName(),
           hadSettingsDocument,
-          homeDataRoot: dataRootForParent(app.getPath('home')),
+          homeDataRoot: dataRootForParent(formerDefaultDataParent()),
           preferredFreshDataRoot: dataRootForParent(defaultDataParent()),
           settingsDataRoot: startupSettings.dataRoot,
           persistDataRoot: (dataRoot) => startupSettingsRepository.setDataRoot({ dataRoot })

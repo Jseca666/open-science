@@ -1048,6 +1048,49 @@ describe('App startup routing', () => {
     expect(mocks.environment.provision).toHaveBeenCalledWith('python')
   })
 
+  it('resumes first-run Python preparation after a failed status read is retried', async () => {
+    mocks.settings.isLoaded = true
+    mocks.startupView = 'onboarding'
+    mocks.environment.statusError = 'environment status unavailable'
+    mocks.environment.retry.mockImplementation(async () => {
+      mocks.environment.statusError = undefined
+      mocks.environment.status = { pythonReady: false, rReady: false, provisioning: false }
+    })
+
+    await render()
+
+    expect(mocks.environment.provision).not.toHaveBeenCalled()
+
+    const retry = container.querySelector<HTMLButtonElement>('[data-testid="env-banner"]')
+    await act(async () => retry?.click())
+
+    expect(mocks.environment.retry).toHaveBeenCalledOnce()
+    expect(mocks.environment.provision).toHaveBeenCalledWith('python')
+  })
+
+  it('preserves first-run Python preparation when onboarding completes before status retry', async () => {
+    mocks.settings.isLoaded = true
+    mocks.startupView = 'onboarding'
+    mocks.environment.statusError = 'environment status unavailable'
+    mocks.environment.retry.mockImplementation(async () => {
+      mocks.environment.statusError = undefined
+      mocks.environment.status = { pythonReady: false, rReady: false, provisioning: false }
+    })
+
+    await render()
+    expect(mocks.environment.provision).not.toHaveBeenCalled()
+
+    mocks.settings.onboardingCompletedAt = Date.now()
+    mocks.startupView = 'app'
+    await act(async () => root.render(<App />))
+
+    const retry = container.querySelector<HTMLButtonElement>('[data-testid="env-banner"]')
+    await act(async () => retry?.click())
+
+    expect(mocks.environment.retry).toHaveBeenCalledOnce()
+    expect(mocks.environment.provision).toHaveBeenCalledWith('python')
+  })
+
   it('does not prepare Python automatically after onboarding is complete', async () => {
     mocks.settings.isLoaded = true
     mocks.settings.onboardingCompletedAt = Date.now()
