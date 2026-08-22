@@ -3,6 +3,7 @@ import { basename, isAbsolute, join, normalize, resolve, sep } from 'node:path'
 
 import { app } from 'electron'
 
+import { NSIS_INSTALL_MARKER, windowsDataParentForExecutable } from './initial-data-root'
 import {
   DEV_SESSION_DIR_NAME,
   PROD_SESSION_DIR_NAME,
@@ -56,7 +57,20 @@ const dataFolderName = (): string => (app.isPackaged ? 'OpenScience' : 'OpenScie
 // at its parent - so this join is the single source of truth for the final path.
 const dataRootForParent = (parent: string): string => join(parent, dataFolderName())
 
-const defaultDataParent = (): string => resolveE2eStorageRoot() ?? app.getPath('home')
+const defaultDataParent = (): string => {
+  const e2eRoot = resolveE2eStorageRoot()
+  if (e2eRoot) return e2eRoot
+
+  const home = app.getPath('home')
+  if (
+    process.platform !== 'win32' ||
+    !app.isPackaged ||
+    !existsSync(join(process.resourcesPath, NSIS_INSTALL_MARKER))
+  ) {
+    return home
+  }
+  return windowsDataParentForExecutable(home, app.getPath('exe')) ?? home
+}
 
 // Converts a user-PICKED directory into the data root. Normally appends the data folder name
 // (`<picked>/OpenScience`), but when the user navigated INTO and selected the OpenScience folder

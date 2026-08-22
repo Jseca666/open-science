@@ -142,7 +142,7 @@ describe('EnvStatusBanner', () => {
     expect(banner.textContent).toContain('Environment update failed')
   })
 
-  it('is hidden for a first-run python preparation (that is the onboarding/gate surface, not a banner)', () => {
+  it('shows first-run Python preparation globally while onboarding can continue', () => {
     act(() =>
       root.render(
         <EnvStatusBanner
@@ -150,7 +150,9 @@ describe('EnvStatusBanner', () => {
         />
       )
     )
-    expect(container.querySelector('[data-testid="env-status-banner"]')).toBeNull()
+    expect(container.querySelector('[data-testid="env-status-banner"]')?.textContent).toContain(
+      'Preparing Python environment… 20%'
+    )
   })
 
   it('is hidden when ready', () => {

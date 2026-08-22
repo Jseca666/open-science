@@ -3,9 +3,8 @@ import { useTranslation } from 'react-i18next'
 import { DownloadProgressLine } from '@/components/DownloadProgressLine'
 import type { ProvisionUiState } from './provisioning-view'
 
-// Floating top-of-app pill for the launch-time upgrade gate (spec §6.2). First-run python preparation
-// is surfaced by the onboarding step and the notebook pane gate instead, so this banner only shows for
-// an in-progress background upgrade or a blocking failure — never for the initial python bootstrap.
+// Floating top-of-app pill for launch-time upgrades and first-run background Python preparation.
+// R remains an explicit Settings/Notebook action and keeps its local progress surface.
 // It overlays content instead of taking layout space: the pages below are h-screen with
 // overflow-hidden, so an in-flow banner would push their bottom edge (the composer toolbar) out of
 // the viewport and clip it (issue #244).
@@ -17,7 +16,7 @@ const EnvStatusBanner = ({
   onRetry?: () => void
 }): React.JSX.Element | null => {
   const { t } = useTranslation()
-  const show = (ui.kind === 'preparing' && ui.scope === 'upgrade') || ui.kind === 'error'
+  const show = (ui.kind === 'preparing' && ui.scope !== 'r') || ui.kind === 'error'
   if (!show) return null
 
   // A preparing banner is a compact single-line pill; an error can carry a longer provisioner reason,
@@ -27,6 +26,14 @@ const EnvStatusBanner = ({
   // than clamping lines, which could hide the actionable tail. The source excerpt is already short
   // (provisioner-runtime.briefTail); full diagnostics also live in the logs.
   const isError = ui.kind === 'error'
+  const progressLabel =
+    ui.kind === 'preparing'
+      ? ui.scope === 'python'
+        ? `${t('Preparing Python environment…')} ${Math.round(ui.progress * 100)}%`
+        : t('Updating the notebook environment… {{percent}}%', {
+            percent: Math.round(ui.progress * 100)
+          })
+      : ''
 
   return (
     <div
@@ -60,19 +67,11 @@ const EnvStatusBanner = ({
         // Task 8: keep the existing overall provision phase text (with its percent), and render the
         // shared DownloadProgressLine (speed/ETA + resume bar) BELOW it — not a second overall bar.
         <div className="flex min-w-56 flex-col text-left">
-          <span>
-            {t('Updating the notebook environment… {{percent}}%', {
-              percent: Math.round(ui.progress * 100)
-            })}
-          </span>
+          <span>{progressLabel}</span>
           <DownloadProgressLine progress={ui.download} />
         </div>
       ) : (
-        <span>
-          {t('Updating the notebook environment… {{percent}}%', {
-            percent: Math.round(ui.progress * 100)
-          })}
-        </span>
+        <span>{progressLabel}</span>
       )}
     </div>
   )

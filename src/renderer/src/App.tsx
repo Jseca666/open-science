@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import type { OpenSessionFromNotificationRequest } from '../../shared/notifications'
-import type { StorageInfo, StorageStatus } from '../../shared/storage'
+import type { StorageStatus } from '../../shared/storage'
 
 import { useDeepLinkNavigation } from '@/lib/deep-link'
 import { WorkspaceAgentRuntimeProvider } from '@/lib/acp/useWorkspaceAgentRuntime'
@@ -138,6 +138,7 @@ const AppContent = (): React.JSX.Element | null => {
   const isPreviewModalOpen = view === 'workspace' && (isFilePreviewOpen || isExpandedPreviewOpen)
   const initEnv = useNotebookEnvStore((state) => state.init)
   const envUi = useNotebookEnvStore((state) => state.ui)
+  const didInitializeNotebookEnv = useRef(false)
   const listenForPermissionChanges = usePermissionGrantsStore((state) => state.listen)
   const listenForNotificationChanges = useNotificationInboxStore((state) => state.listen)
   const retryEnv = useNotebookEnvStore((state) => state.retry)
@@ -173,11 +174,6 @@ const AppContent = (): React.JSX.Element | null => {
     const status = await useStorageInfoStore.getState().loadStatus()
     applyStorageStatus(status)
     return status
-  }, [applyStorageStatus])
-  const loadStorageInfo = useCallback(async (): Promise<StorageInfo> => {
-    const info = await useStorageInfoStore.getState().load()
-    applyStorageStatus(info)
-    return info
   }, [applyStorageStatus])
   const deferredNotification = useRef<OpenSessionFromNotificationRequest | undefined>(undefined)
   const pendingNotificationOpenQueue = useRef<Promise<void>>(Promise.resolve())
@@ -313,16 +309,24 @@ const AppContent = (): React.JSX.Element | null => {
   useEffect(() => listenForPermissionChanges(), [listenForPermissionChanges])
   useEffect(() => listenForNotificationChanges(), [listenForNotificationChanges])
 
-  // Mirrors the main-process provisioner once at launch (Plan A auto-runs upgradeIfNeeded and
-  // broadcasts progress); the returned `ui` drives the top-level upgrade/error banner below.
+  // Mirror the provisioner after settings identifies a true first-run user. Existing users only
+  // hydrate/upgrade as before; onboarding users also start one background Python preparation. The
+  // execution admission gate remains authoritative if a Notebook call arrives before it settles.
   useEffect(() => {
-    void initEnv()
-  }, [initEnv])
+    if (!isSettingsLoaded || didInitializeNotebookEnv.current) return
+    didInitializeNotebookEnv.current = true
+    void initEnv().then(() => {
+      if (onboardingCompletedAt !== undefined) return
+      const env = useNotebookEnvStore.getState()
+      if (!env.status.pythonReady && !env.status.provisioning && !env.statusError) {
+        void env.provision('python')
+      }
+    })
+  }, [initEnv, isSettingsLoaded, onboardingCompletedAt])
 
   // Checked once at startup, after the gate is settled: dataRootMissing only fires for an
   // explicitly-configured root, which implies onboarding already completed - never during the
   // wizard itself. This lightweight status request deliberately does not calculate directory usage.
-  // Onboarding requests the full StorageInfo independently when it needs location details.
   useEffect(() => {
     void Promise.resolve()
       .then(loadStorageStatus)
@@ -554,7 +558,7 @@ const AppContent = (): React.JSX.Element | null => {
     return (
       <>
         <EnvStatusBanner ui={envUi} onRetry={() => void retryEnv()} />
-        <OnboardingWizard loadStorageInfo={loadStorageInfo} />
+        <OnboardingWizard />
       </>
     )
   }
