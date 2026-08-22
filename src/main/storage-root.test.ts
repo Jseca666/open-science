@@ -161,6 +161,24 @@ describe('computeDefaultDataRoot', () => {
     expect(computeDefaultDataRoot()).toBe(join(homeDir, 'OpenScience'))
   })
 
+  it('falls back to home when a packaged Windows test host has no resourcesPath', () => {
+    const platformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform')!
+    const resourcesPathDescriptor = Object.getOwnPropertyDescriptor(process, 'resourcesPath')
+    try {
+      Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
+      Object.defineProperty(process, 'resourcesPath', { value: undefined, configurable: true })
+
+      expect(computeDefaultDataRoot()).toBe(join(homeDir, 'OpenScience'))
+    } finally {
+      Object.defineProperty(process, 'platform', platformDescriptor)
+      if (resourcesPathDescriptor) {
+        Object.defineProperty(process, 'resourcesPath', resourcesPathDescriptor)
+      } else {
+        Reflect.deleteProperty(process, 'resourcesPath')
+      }
+    }
+  })
+
   it('keeps packaged E2E config and data under the disposable certification root', () => {
     const e2eRoot = join(homeDir, 'certification')
     vi.stubEnv('OPEN_SCIENCE_E2E_STORAGE_ROOT', e2eRoot)

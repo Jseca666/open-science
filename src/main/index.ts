@@ -290,6 +290,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
       if (
         process.platform === 'win32' &&
         app.isPackaged &&
+        typeof process.resourcesPath === 'string' &&
         existsSync(join(process.resourcesPath, NSIS_INSTALL_MARKER))
       ) {
         const preparedDataRoot = await prepareInitialDataRoot({

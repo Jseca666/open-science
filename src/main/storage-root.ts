@@ -62,10 +62,12 @@ const defaultDataParent = (): string => {
   if (e2eRoot) return e2eRoot
 
   const home = app.getPath('home')
+  const resourcesPath = process.resourcesPath
   if (
     process.platform !== 'win32' ||
     !app.isPackaged ||
-    !existsSync(join(process.resourcesPath, NSIS_INSTALL_MARKER))
+    typeof resourcesPath !== 'string' ||
+    !existsSync(join(resourcesPath, NSIS_INSTALL_MARKER))
   ) {
     return home
   }
