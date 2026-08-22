@@ -21,12 +21,28 @@ type PrepareInitialDataRootOptions = {
 // Keep the user's home-relative path while replacing only the drive. Installation files and user
 // data remain separate: C:\Users\Alice + an executable on D: becomes D:\Users\Alice, never the
 // protected application directory itself. UNC and relative paths deliberately opt out.
-const windowsDataParentForExecutable = (home: string, executable: string): string | undefined => {
+const windowsDataParentForExecutable = (
+  home: string,
+  executable: string,
+  dataFolderName: string
+): string | undefined => {
   const homeRoot = win32.parse(home).root
   const executableRoot = win32.parse(executable).root
   if (!/^[a-z]:\\$/i.test(homeRoot) || !/^[a-z]:\\$/i.test(executableRoot)) return undefined
-  if (homeRoot.toLowerCase() === executableRoot.toLowerCase()) return home
-  return win32.join(executableRoot, win32.relative(homeRoot, home))
+  const parent =
+    homeRoot.toLowerCase() === executableRoot.toLowerCase()
+      ? home
+      : win32.join(executableRoot, win32.relative(homeRoot, home))
+  const relativeToInstall = win32.relative(
+    win32.dirname(executable),
+    win32.join(parent, dataFolderName)
+  )
+  const dataRootIsInsideInstall =
+    relativeToInstall === '' ||
+    (relativeToInstall !== '..' &&
+      !relativeToInstall.startsWith(`..${win32.sep}`) &&
+      !win32.isAbsolute(relativeToInstall))
+  return dataRootIsInsideInstall ? undefined : parent
 }
 
 const defaultEnsureWritable = async (path: string): Promise<void> => {

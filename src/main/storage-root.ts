@@ -71,7 +71,7 @@ const defaultDataParent = (): string => {
   ) {
     return home
   }
-  return windowsDataParentForExecutable(home, app.getPath('exe')) ?? home
+  return windowsDataParentForExecutable(home, app.getPath('exe'), dataFolderName()) ?? home
 }
 
 // Converts a user-PICKED directory into the data root. Normally appends the data folder name

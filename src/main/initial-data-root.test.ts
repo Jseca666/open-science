@@ -1,3 +1,5 @@
+import { join } from 'node:path'
+
 import { describe, expect, it, vi } from 'vitest'
 
 import { prepareInitialDataRoot, windowsDataParentForExecutable } from './initial-data-root'
@@ -9,11 +11,11 @@ type TestOptions = Parameters<typeof prepareInitialDataRoot>[0] & {
 }
 
 const options = (): TestOptions => ({
-  configRoot: '/config',
+  configRoot: join('fixture', 'config'),
   dataFolderName: 'OpenScience',
   hadSettingsDocument: false,
-  homeDataRoot: '/home/alice/OpenScience',
-  preferredFreshDataRoot: '/drive-d/Users/alice/OpenScience',
+  homeDataRoot: join('fixture', 'home', 'alice', 'OpenScience'),
+  preferredFreshDataRoot: join('fixture', 'drive-d', 'Users', 'alice', 'OpenScience'),
   persistDataRoot: vi.fn().mockResolvedValue(undefined),
   pathExists: vi.fn((path: string): boolean => path.length < 0),
   ensureWritable: vi.fn().mockResolvedValue(undefined)
@@ -22,20 +24,59 @@ const options = (): TestOptions => ({
 describe('windowsDataParentForExecutable', () => {
   it('keeps the home-relative path but replaces a different installation drive', () => {
     expect(
-      windowsDataParentForExecutable('C:\\Users\\Alice', 'D:\\Apps\\Open Science\\Open Science.exe')
+      windowsDataParentForExecutable(
+        'C:\\Users\\Alice',
+        'D:\\Apps\\Open Science\\Open Science.exe',
+        'OpenScience'
+      )
     ).toBe('D:\\Users\\Alice')
   })
 
   it('keeps the normal home path for a same-drive install', () => {
     expect(
-      windowsDataParentForExecutable('C:\\Users\\Alice', 'C:\\Apps\\Open Science\\Open Science.exe')
+      windowsDataParentForExecutable(
+        'C:\\Users\\Alice',
+        'C:\\Apps\\Open Science\\Open Science.exe',
+        'OpenScience'
+      )
     ).toBe('C:\\Users\\Alice')
   })
 
   it('does not derive a local data path from UNC locations', () => {
     expect(
-      windowsDataParentForExecutable('C:\\Users\\Alice', '\\\\server\\apps\\Open Science.exe')
+      windowsDataParentForExecutable(
+        'C:\\Users\\Alice',
+        '\\\\server\\apps\\Open Science.exe',
+        'OpenScience'
+      )
     ).toBeUndefined()
+  })
+
+  it('rejects a derived data root inside the installation directory', () => {
+    expect(
+      windowsDataParentForExecutable(
+        'C:\\Users\\Alice',
+        'D:\\Users\\Open Science.exe',
+        'OpenScience'
+      )
+    ).toBeUndefined()
+    expect(
+      windowsDataParentForExecutable(
+        'C:\\Users\\Alice',
+        'D:\\Users\\Alice\\OpenScience\\Open Science.exe',
+        'OpenScience'
+      )
+    ).toBeUndefined()
+  })
+
+  it('allows a data root beside, but not inside, the installation directory', () => {
+    expect(
+      windowsDataParentForExecutable(
+        'C:\\Users\\Alice',
+        'D:\\Users\\Alice\\Apps\\Open Science.exe',
+        'OpenScience'
+      )
+    ).toBe('D:\\Users\\Alice')
   })
 })
 
@@ -75,7 +116,7 @@ describe('prepareInitialDataRoot', () => {
     'backfills the former home default when historical %s data exists',
     async (entry) => {
       const input = options()
-      input.pathExists.mockImplementation((path) => path === `/config/${entry}`)
+      input.pathExists.mockImplementation((path) => path === join(input.configRoot, entry))
 
       await expect(prepareInitialDataRoot(input)).resolves.toBe(input.homeDataRoot)
       expect(input.persistDataRoot).toHaveBeenCalledWith(input.homeDataRoot)
@@ -84,7 +125,7 @@ describe('prepareInitialDataRoot', () => {
 
   it('leaves a legacy config-root install unset so its migration prompt remains available', async () => {
     const input = options()
-    input.pathExists.mockImplementation((path) => path === '/config/artifacts')
+    input.pathExists.mockImplementation((path) => path === join(input.configRoot, 'artifacts'))
 
     await expect(prepareInitialDataRoot(input)).resolves.toBeUndefined()
     expect(input.ensureWritable).not.toHaveBeenCalled()
@@ -94,7 +135,7 @@ describe('prepareInitialDataRoot', () => {
   it('does not let an existing home folder hide live legacy config-root data', async () => {
     const input = options()
     input.pathExists.mockImplementation(
-      (path) => path === '/config/artifacts' || path === input.homeDataRoot
+      (path) => path === join(input.configRoot, 'artifacts') || path === input.homeDataRoot
     )
 
     await expect(prepareInitialDataRoot(input)).resolves.toBeUndefined()
