@@ -373,9 +373,7 @@ const sameInventory = (left: MigrationInventory, right: MigrationInventory): boo
 type DataRootWriterPauseDeps = {
   logger?: Logger
   runtime: { disconnect: () => Promise<unknown> }
-  // Return ignored (awaited only), so kept as Promise<unknown> — mirrors runtime.disconnect above and
-  // stays compatible with both the real service (now returns { reaped }) and void test fakes.
-  notebook: { shutdownAll: () => Promise<unknown> }
+  notebook: { shutdownAll: () => Promise<{ reaped: boolean } | void> }
   // Releases the shared SQLite authority connection before migration validation opens its dedicated
   // checkpoint client. Injectable so ordering remains testable without module-level state.
   disconnectProjectDb?: () => Promise<void>
@@ -386,7 +384,10 @@ type DataRootWriterPauseDeps = {
 // while existing leases drain.
 export const pauseDataRootWriters = async (deps: DataRootWriterPauseDeps): Promise<void> => {
   await deps.runtime.disconnect()
-  await deps.notebook.shutdownAll()
+  const notebookShutdown = await deps.notebook.shutdownAll()
+  if (notebookShutdown?.reaped === false) {
+    throw new Error('Notebook processes could not be stopped before data migration.')
+  }
   await (deps.disconnectProjectDb ?? disconnectProjectDbClient)()
   await waitForDataRootWriters()
 }
@@ -394,6 +395,9 @@ export const pauseDataRootWriters = async (deps: DataRootWriterPauseDeps): Promi
 type MigrationCopyDeps = DataRootWriterPauseDeps & {
   currentDataRoot: string
   diagnosticCorrelationId?: string
+  // The composition root supplies Notebook-owned cache cleanup. A runtime-only target may contain
+  // rebuildable residue, but migration must not commit a stale or ownership-unverified cache.
+  cleanupRuntimeCache?: (runtimeRoot: string) => boolean
   // Exports each conda env under the old runtime to an @EXPLICIT lock at the new root (offline
   // reconstruction bundle). Returns the env names preserved; [] when nothing could be exported.
   // Injectable/optional so tests and non-notebook contexts skip it. Best-effort (must not throw).
@@ -468,11 +472,27 @@ export const runDataRootMigration = async (
     status: 'copying'
   }
   operation.phase('prepare-staging')
+  const targetRuntimeRoot = join(target, 'runtime')
+  let targetRuntimeCacheClean = true
+  try {
+    targetRuntimeCacheClean = deps.cleanupRuntimeCache?.(targetRuntimeRoot) ?? true
+  } catch {
+    targetRuntimeCacheClean = false
+  }
+  if (!targetRuntimeCacheClean) {
+    const error = new Error('The new data location contains an untrusted runtime cache.')
+    operation.fail(error)
+    return {
+      ok: false,
+      error:
+        'The new data location contains a Notebook cache that Open Science cannot safely replace. Choose another location or remove that cache first.'
+    }
+  }
   try {
     await mkdir(target, { recursive: true })
     // A runtime-only destination is a valid move target and may be residue from an earlier location.
-    // Drop only its path-keyed mutable Environment cache before staging; keep relocatable packages,
-    // exported locks, and every other rebuildable runtime file intact.
+    // The injected owner cleanup above removed verified rebuildable caches; now drop the path-keyed
+    // mutable Environment inventory while keeping relocatable archives and exported locks intact.
     await rm(join(target, RUNTIME_ENVIRONMENT_INVENTORY_DIR), { recursive: true, force: true })
     await writeMigrationMarker(target, marker)
   } catch (err) {
@@ -510,9 +530,9 @@ export const runDataRootMigration = async (
   }
 
   // Preserve the runtime: export each env to an offline @EXPLICIT lock at the new root, then copy the
-  // (relocatable) pkgs cache alongside the user data so the envs can be rebuilt offline there. Both
-  // are best-effort — a failure just leaves the new root to re-provision defaults, never blocks the
-  // user-data copy. pkgs is copied only when at least one env was actually preserved.
+  // (relocatable) pkgs archive store alongside the user data. Exporting environment locks is
+  // best-effort, but already-published durable archives follow Data Storage independently of whether
+  // any environment could be exported.
   operation.phase('preserve-runtime')
   let preservedEnvs: string[] = []
   let runtimePreservationDegraded = false
@@ -523,8 +543,7 @@ export const runDataRootMigration = async (
       runtimePreservationDegraded = true
     }
   }
-  const migrateDirs =
-    preservedEnvs.length > 0 ? [...BASE_MIGRATION_DIRS, RUNTIME_PKGS_DIR] : [...BASE_MIGRATION_DIRS]
+  const migrateDirs = [...BASE_MIGRATION_DIRS, RUNTIME_PKGS_DIR]
 
   const doCopyAndVerify = deps.copyAndVerify ?? copyAndVerify
   let result: MigrationResult

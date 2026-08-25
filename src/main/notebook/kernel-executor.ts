@@ -21,6 +21,10 @@ import {
 import { mapLoopOutputs, type MappedFigure } from './loop-output-mapper'
 import { protectManagedRuntimeWrites } from './managed-runtime-guard'
 import {
+  notebookWorkloadCacheEnv,
+  prepareNotebookWorkloadCache
+} from './notebook-workload-cache-paths'
+import {
   condaActivatedPath,
   DEFAULT_PY_ENV,
   DEFAULT_R_ENV,
@@ -731,6 +735,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
     request: NotebookExecutionRequest
   ): Promise<ChildProcessWithoutNullStreams> {
     const figuresDir = this.ensureFiguresDir()
+    prepareNotebookWorkloadCache(request.runtimeRoot)
     // A missing session dir would surface as an opaque ENOENT; fall back to the OS default cwd so
     // spawn fails only for a genuinely missing interpreter.
     const spawnCwd = existsSync(request.cwd) ? request.cwd : undefined
@@ -756,9 +761,10 @@ class NotebookKernelExecutor implements NotebookExecutor {
     }
 
     // The semantic guard rejects known installers before dispatch. This native layer makes the
-    // app-owned runtime read-only to the complete persistent-kernel process tree as well, covering
-    // dynamically constructed R/Python/REPL calls. manage_packages runs in the main process outside
-    // this wrapper and remains the only package writer.
+    // managed runtime state read-only to the complete persistent-kernel process tree as well, covering
+    // dynamically constructed R/Python/REPL calls. Only the disposable workload-cache subtree remains
+    // writable; manage_packages runs in the main process outside this wrapper and remains the only
+    // package writer.
     const invocation = protectManagedRuntimeWrites(
       { executable: command, args },
       request.runtimeRoot,
@@ -793,6 +799,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
           : envPrefix(request.runtimeRoot, resolveRequestEnv(kind, request))
     const env: NodeJS.ProcessEnv = {
       ...process.env,
+      ...notebookWorkloadCacheEnv(request.runtimeRoot),
       // Force a non-interactive matplotlib backend so plt.show() never opens a GUI window in this
       // headless runtime; respect an explicitly configured backend if present.
       MPLBACKEND: process.env.MPLBACKEND || 'Agg',

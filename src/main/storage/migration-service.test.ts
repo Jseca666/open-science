@@ -538,7 +538,8 @@ describe('validateNewDataRoot', () => {
 type FakeDeps = {
   currentDataRoot: string
   runtime: { disconnect: Mock<() => Promise<unknown>> }
-  notebook: { shutdownAll: Mock<() => Promise<void>> }
+  notebook: { shutdownAll: Mock<() => Promise<{ reaped: boolean } | void>> }
+  cleanupRuntimeCache: Mock<(runtimeRoot: string) => boolean>
   setDataRoot: Mock<(path: string) => Promise<void>>
 }
 
@@ -546,7 +547,10 @@ type FakeDeps = {
 const fakeDeps = (): FakeDeps => ({
   currentDataRoot,
   runtime: { disconnect: vi.fn<() => Promise<unknown>>().mockResolvedValue(undefined) },
-  notebook: { shutdownAll: vi.fn<() => Promise<void>>().mockResolvedValue(undefined) },
+  notebook: {
+    shutdownAll: vi.fn<() => Promise<{ reaped: boolean } | void>>().mockResolvedValue(undefined)
+  },
+  cleanupRuntimeCache: vi.fn<(runtimeRoot: string) => boolean>().mockReturnValue(true),
   setDataRoot: vi.fn<(path: string) => Promise<void>>().mockResolvedValue(undefined)
 })
 
@@ -611,6 +615,7 @@ describe('runDataRootMigration (copy phase)', () => {
     )
 
     expect(result).toEqual({ ok: true })
+    expect(deps.cleanupRuntimeCache).toHaveBeenCalledWith(join(dataRootFor(emptyParent), 'runtime'))
     const records = diagnosticRecords(logger)
     expect(
       records.filter((record) => record.phase && !record.outcome).map((record) => record.phase)
@@ -631,6 +636,29 @@ describe('runDataRootMigration (copy phase)', () => {
         preservedEnvironmentCount: 0
       })
     )
+  })
+
+  it('refuses a runtime-only target whose Notebook cache cannot be safely replaced', async () => {
+    const deps = fakeDeps()
+    deps.cleanupRuntimeCache.mockReturnValue(false)
+    const target = dataRootFor(emptyParent)
+    await mkdir(join(target, 'runtime', 'cache', 'notebook'), { recursive: true })
+    const copyAndVerify = vi.fn(async (): Promise<MigrationResult> => ({ ok: true }))
+
+    const result = await runDataRootMigration(
+      { ...deps, currentDataRoot, copyAndVerify },
+      emptyParent,
+      runOpts()
+    )
+
+    expect(result).toEqual({
+      ok: false,
+      error:
+        'The new data location contains a Notebook cache that Open Science cannot safely replace. Choose another location or remove that cache first.'
+    })
+    expect(deps.cleanupRuntimeCache).toHaveBeenCalledWith(join(target, 'runtime'))
+    expect(copyAndVerify).not.toHaveBeenCalled()
+    expect(existsSync(target)).toBe(true)
   })
 
   it('records bounded copy quartiles without retaining the current file path', async () => {
@@ -736,10 +764,10 @@ describe('runDataRootMigration (copy phase)', () => {
       expect.objectContaining({
         from: currentDataRoot,
         to: target,
-        dirs: [...MIGRATED_DIRS, RUNTIME_ENVIRONMENT_MANIFESTS_DIR]
+        dirs: [...MIGRATED_DIRS, RUNTIME_ENVIRONMENT_MANIFESTS_DIR, join('runtime', 'pkgs')]
       })
     )
-    // runtime/ is excluded from the moved set (non-relocatable; rebuilt on demand).
+    // runtime/ is excluded wholesale; only relocatable durable subtrees are copied explicitly.
     expect(MIGRATED_DIRS).not.toContain('runtime')
     expect(MIGRATED_DIRS).toContain('delegation')
     expect(MIGRATED_DIRS).toContain('workspaces')
@@ -1203,6 +1231,25 @@ describe('runDataRootMigration (copy phase)', () => {
       })
     )
     expect(JSON.stringify(diagnosticRecords(logger))).not.toContain('disconnect boom')
+  })
+
+  it('aborts before copying when a Notebook child cannot be reaped', async () => {
+    const deps = fakeDeps()
+    deps.notebook.shutdownAll.mockResolvedValue({ reaped: false })
+    const copyAndVerify = vi.fn(async (): Promise<MigrationResult> => ({ ok: true }))
+
+    const result = await runDataRootMigration(
+      { currentDataRoot, runtime: deps.runtime, notebook: deps.notebook, copyAndVerify },
+      emptyParent,
+      runOpts()
+    )
+
+    expect(result).toEqual({
+      ok: false,
+      error: 'Could not pause running work to copy your data safely. Please try again in a moment.'
+    })
+    expect(copyAndVerify).not.toHaveBeenCalled()
+    expect(existsSync(dataRootFor(emptyParent))).toBe(false)
   })
 })
 
@@ -1800,7 +1847,7 @@ describe('runtime preservation + old-runtime cleanup', () => {
     )
   })
 
-  it('omits the pkgs cache when nothing was preserved', async () => {
+  it('copies durable package archives even when no environment was preserved', async () => {
     const deps = fakeDeps()
     const exportRuntimeLocks = vi.fn(async () => [] as string[])
     const copyAndVerify = vi.fn(async (): Promise<MigrationResult> => ({ ok: true }))
@@ -1819,7 +1866,7 @@ describe('runtime preservation + old-runtime cleanup', () => {
 
     expect(copyAndVerify).toHaveBeenCalledWith(
       expect.objectContaining({
-        dirs: [...MIGRATED_DIRS, RUNTIME_ENVIRONMENT_MANIFESTS_DIR]
+        dirs: [...MIGRATED_DIRS, RUNTIME_ENVIRONMENT_MANIFESTS_DIR, join('runtime', 'pkgs')]
       })
     )
   })
@@ -1848,7 +1895,7 @@ describe('runtime preservation + old-runtime cleanup', () => {
     expect(result).toEqual({ ok: true })
     expect(copyAndVerify).toHaveBeenCalledWith(
       expect.objectContaining({
-        dirs: [...MIGRATED_DIRS, RUNTIME_ENVIRONMENT_MANIFESTS_DIR]
+        dirs: [...MIGRATED_DIRS, RUNTIME_ENVIRONMENT_MANIFESTS_DIR, join('runtime', 'pkgs')]
       })
     )
     expect(diagnosticRecords(logger)).toContainEqual(
