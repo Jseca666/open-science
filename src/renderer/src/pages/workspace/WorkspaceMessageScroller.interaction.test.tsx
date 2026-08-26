@@ -1270,46 +1270,26 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     const session = createSession({
       activities: [createActivity({ id: 'tool-ask-1', elicitation: projection })]
     })
-    const onSendEditedMessage = vi.fn()
-    const onActivatePendingElicitation = vi.fn()
-    const pendingElicitation = {
-      requestId: 'elicitation-1',
-      sessionId: session.id,
-      toolCallId: 'tool-ask-1',
-      message: projection.message,
-      fields: projection.fields
-    }
 
     root = createRoot(container)
     await act(async () => {
       root.render(
         <WorkspaceMessageScroller
           activeSession={session}
-          onSendEditedMessage={onSendEditedMessage}
+          onSendEditedMessage={vi.fn()}
+          pendingElicitations={[
+            {
+              requestId: 'elicitation-1',
+              sessionId: session.id,
+              toolCallId: 'tool-ask-1',
+              message: projection.message,
+              fields: projection.fields
+            }
+          ]}
         />
       )
     })
 
-    const placeholderBeforeActivation = container.querySelector(
-      '[data-testid="elicitation-pending-placeholder"]'
-    )
-    const cardBeforeActivation = container.querySelector('[data-testid="elicitation-card"]')
-    expect(placeholderBeforeActivation?.tagName).toBe('P')
-
-    await act(async () => {
-      root.render(
-        <WorkspaceMessageScroller
-          activeSession={session}
-          onSendEditedMessage={onSendEditedMessage}
-          pendingElicitations={[pendingElicitation]}
-          onActivatePendingElicitation={onActivatePendingElicitation}
-        />
-      )
-    })
-
-    expect(container.querySelector('[data-testid="elicitation-card"]')).not.toBe(
-      cardBeforeActivation
-    )
     expect(container.querySelector('[data-testid="elicitation-card"]')).not.toBeNull()
     expect(container.textContent).toContain('Choose an approach')
     expect(container.textContent).toContain('Awaiting your answer…')
@@ -1317,35 +1297,6 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
       container.querySelector('[data-testid="elicitation-pending-placeholder"]')
     ).not.toBeNull()
     expect(container.querySelector('[data-testid="elicitation-option-minimal"]')).toBeNull()
-    expect(
-      container.querySelectorAll('[data-testid="elicitation-card"] button[type="submit"]')
-    ).toHaveLength(0)
-
-    await act(async () => {
-      container
-        .querySelector<HTMLButtonElement>('[data-testid="elicitation-pending-placeholder"]')
-        ?.click()
-    })
-    expect(onActivatePendingElicitation).toHaveBeenCalledOnce()
-
-    const nextActivation = vi.fn()
-    await act(async () => {
-      root.render(
-        <WorkspaceMessageScroller
-          activeSession={session}
-          onSendEditedMessage={onSendEditedMessage}
-          pendingElicitations={[pendingElicitation]}
-          onActivatePendingElicitation={nextActivation}
-        />
-      )
-    })
-    await act(async () => {
-      container
-        .querySelector<HTMLButtonElement>('[data-testid="elicitation-pending-placeholder"]')
-        ?.click()
-    })
-    expect(onActivatePendingElicitation).toHaveBeenCalledOnce()
-    expect(nextActivation).toHaveBeenCalledOnce()
   })
 
   it('rehydrates a durable answered question as a read-only message review', async () => {

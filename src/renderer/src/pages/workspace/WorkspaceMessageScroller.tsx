@@ -96,7 +96,6 @@ type WorkspaceMessageScrollerProps = {
   onBranchInNewSession?: (messageId: string) => void
   trailingContent?: ReactNode
   pendingElicitations?: PendingElicitationRequest[]
-  onActivatePendingElicitation?: () => void
   // Events are read-only projections; retry sends an intent that main validates against its state.
   handoffLifecycleSource?: HandoffLifecycleEventSource
   onRetryHandoff?: (request: HandoffRetryRequest) => Promise<void>
@@ -374,7 +373,6 @@ const WorkspaceMessageScrollerImpl = ({
   onBranchInNewSession,
   trailingContent,
   pendingElicitations = [],
-  onActivatePendingElicitation,
   handoffLifecycleSource,
   onRetryHandoff,
   reportPresentationRevealing = false
@@ -1482,7 +1480,6 @@ const WorkspaceMessageScrollerImpl = ({
                                 ? 'pending-placeholder'
                                 : 'default'
                             }
-                            onPendingActivate={onActivatePendingElicitation}
                           />
                         </div>
                       </div>
@@ -1662,11 +1659,6 @@ const areWorkspaceMessageScrollerPropsEqual = (
   (previous.canBranchInNewSession ?? false) === (next.canBranchInNewSession ?? false) &&
   (previous.reportPresentationRevealing ?? false) === (next.reportPresentationRevealing ?? false) &&
   previous.onBranchInNewSession === next.onBranchInNewSession &&
-  previous.onActivatePendingElicitation === next.onActivatePendingElicitation &&
-  (previous.pendingElicitations ?? []).length === (next.pendingElicitations ?? []).length &&
-  (previous.pendingElicitations ?? []).every((request, index) =>
-    Object.is(request, (next.pendingElicitations ?? [])[index])
-  ) &&
   previous.trailingContent === next.trailingContent &&
   previous.isResumingSession === next.isResumingSession &&
   previous.notebookReference?.sessionId === next.notebookReference?.sessionId &&

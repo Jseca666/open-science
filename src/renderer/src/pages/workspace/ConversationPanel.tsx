@@ -167,13 +167,7 @@ const composerCancelButtonClassName = cn(
   composerInteractiveTransitionClassName
 )
 const composerContentClassName = 'mx-auto w-full max-w-4xl'
-const blockingFocusSelectors = [
-  '[data-blocking-primary-focus="true"]',
-  '[data-testid="permission-approval-controls"] [data-testid="allow-primary"]:not(:disabled)',
-  '[data-testid="permission-approval-controls"] [data-testid="extra-option"]:not(:disabled)',
-  '[data-testid="permission-approval-controls"] [data-testid="deny-button"]:not(:disabled)',
-  'button:not([disabled]):not([data-resize-handle="true"]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [role="textbox"]:not([aria-disabled="true"]), [tabindex]:not([tabindex="-1"])'
-] as const
+const blockingPlanFocusSelector = '[data-blocking-primary-focus="true"]'
 const attachmentChipClassName =
   'flex h-9 min-w-0 max-w-[220px] items-center gap-2 rounded-lg border border-border-200 bg-bg-200 px-2 text-text-000'
 const attachmentRemoveButtonClassName = cn(
@@ -727,15 +721,10 @@ const ConversationPanel = ({
     activeSession?.compacting ||
     activeSession?.fixLoopActive
   )
-  const blockingInteractionKey = sideChat
-    ? undefined
-    : hasPendingPermission
-      ? `permission:${rootPermissionRequests[0]?.requestId ?? 'pending'}`
-      : pendingElicitation
-        ? `elicitation:${pendingElicitationRequest?.requestId ?? pendingElicitationActivity?.id ?? 'pending'}`
-        : pendingPlan
-          ? `plan:${activeSession?.id ?? 'session'}:${activePendingPlanKey}`
-          : undefined
+  const blockingPlanInteractionKey =
+    blockingInteraction === 'plan' && pendingPlan
+      ? `plan:${activeSession?.id ?? 'session'}:${activePendingPlanKey}`
+      : undefined
 
   // Re-attaches the interrupted session; on success the banner unmounts, so guard the state update.
   const handleResume = async (): Promise<void> => {
@@ -791,25 +780,20 @@ const ConversationPanel = ({
     if (!surface) return
     const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
     surface.scrollIntoView?.({ behavior: reducedMotion ? 'auto' : 'smooth', block: 'nearest' })
-    for (const selector of blockingFocusSelectors) {
-      const target = surface.querySelector<HTMLElement>(selector)
-      if (!target) continue
-      target.focus({ preventScroll: true })
-      break
-    }
+    surface.querySelector<HTMLElement>(blockingPlanFocusSelector)?.focus({ preventScroll: true })
   }, [])
 
-  const previousBlockingInteractionKeyRef = useRef<string | undefined>(undefined)
+  const previousBlockingPlanInteractionKeyRef = useRef<string | undefined>(undefined)
   useEffect(() => {
-    const previousKey = previousBlockingInteractionKeyRef.current
-    previousBlockingInteractionKeyRef.current = blockingInteractionKey
+    const previousKey = previousBlockingPlanInteractionKeyRef.current
+    previousBlockingPlanInteractionKeyRef.current = blockingPlanInteractionKey
 
-    if (blockingInteractionKey) {
+    if (blockingPlanInteractionKey) {
       focusBlockingComposer()
       return
     }
     if (previousKey) setComposerRestoreFocusRequest((request) => (request ?? 0) + 1)
-  }, [blockingInteractionKey, focusBlockingComposer])
+  }, [blockingPlanInteractionKey, focusBlockingComposer])
 
   // A new desktop Plan may claim an idle/collapsed preview once. If the user is already looking at
   // another preview, register the Plan tab passively and leave their current work untouched.
@@ -996,9 +980,6 @@ const ConversationPanel = ({
               canBranchInNewSession={canBranchInNewSession}
               onBranchInNewSession={onBranchFromAgentMessage}
               pendingElicitations={sideChat ? [] : sessionPendingElicitations}
-              onActivatePendingElicitation={
-                blockingInteraction === 'elicitation' ? focusBlockingComposer : undefined
-              }
               handoffLifecycleSource={workspaceHandoffLifecycleClient}
               onRetryHandoff={(request) => workspaceHandoffLifecycleClient.retry(request)}
               reportPresentationRevealing

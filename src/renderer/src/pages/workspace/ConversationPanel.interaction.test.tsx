@@ -147,46 +147,23 @@ vi.mock('@/components/RemoteJobBadge', () => ({
 vi.mock('./WorkspaceMessageScroller', () => ({
   WorkspaceMessageScroller: ({
     isResumingSession,
-    pendingElicitations = [],
-    onActivatePendingElicitation
+    pendingElicitations = []
   }: {
     isResumingSession?: boolean
     pendingElicitations?: unknown[]
-    onActivatePendingElicitation?: () => void
   }): React.JSX.Element => (
     <>
       {isResumingSession ? (
         <span data-testid="resume-progress-indicator">Resuming session</span>
       ) : null}
       <span data-testid="scroller-pending-elicitations">{pendingElicitations.length}</span>
-      {pendingElicitations.length > 0 ? (
-        <button
-          type="button"
-          data-testid="scroller-pending-elicitation"
-          onClick={onActivatePendingElicitation}
-        >
-          Awaiting your answer…
-        </button>
-      ) : null}
     </>
   )
 }))
 
 vi.mock('./PermissionApprovalControls', () => ({
   PermissionApprovalControls: ({ requests }: { requests: unknown[] }): React.JSX.Element | null =>
-    requests.length > 0 ? (
-      <div data-testid="permission-approval-controls">
-        <button type="button" data-testid="permission-impact-info">
-          Permission details
-        </button>
-        <button type="button" data-testid="allow-primary">
-          Allow
-        </button>
-        <button type="button" data-testid="deny-button">
-          Deny
-        </button>
-      </div>
-    ) : null
+    requests.length > 0 ? <span data-testid="permission-approval-controls" /> : null
 }))
 
 let container: HTMLDivElement
@@ -797,7 +774,7 @@ describe('ConversationPanel composer intake', () => {
     expect(document.activeElement).toBe(getComposerEditor())
   })
 
-  it('moves focus into a blocking interaction and restores it after resolution', () => {
+  it('does not focus the hidden composer while a blocking interaction owns its lane', () => {
     renderPanel({
       view: {
         composerFocusKey: 'session-a'
@@ -818,16 +795,7 @@ describe('ConversationPanel composer intake', () => {
     })
 
     expectComposerCoveredByBlockingOverlay()
-    expect(document.activeElement).toBe(container.querySelector('[data-testid="allow-primary"]'))
-
-    renderPanel({
-      view: {
-        composerFocusKey: 'session-blocked'
-      },
-      permissions: { requests: [] }
-    })
-
-    expect(document.activeElement).toBe(getComposerEditor())
+    expect(document.activeElement).toBe(navigationButton)
   })
 
   it('does not refocus the composer when draft editing becomes available', () => {
@@ -1168,19 +1136,6 @@ describe('ConversationPanel composer intake', () => {
       '[data-elicitation-option-row="true"]'
     )
     expect(optionRows).toHaveLength(2)
-    expect(container.querySelectorAll('[data-testid="elicitation-choice-mode"]')).toHaveLength(1)
-
-    const navigationButton = container.querySelector<HTMLButtonElement>(
-      '[aria-label="Open navigation"]'
-    )!
-    navigationButton.focus()
-    act(() => {
-      container
-        .querySelector<HTMLButtonElement>('[data-testid="scroller-pending-elicitation"]')
-        ?.click()
-    })
-    expect(document.activeElement).toBe(optionRows[0])
-
     ;(elicitationComposer as HTMLElement).getBoundingClientRect = () => ({ height: 480 }) as DOMRect
     scrollSurface.getBoundingClientRect = () => ({ top: 32 }) as DOMRect
     optionRows[1].getBoundingClientRect = () => ({ bottom: 180 }) as DOMRect
@@ -2468,7 +2423,7 @@ describe('ConversationPanel composer intake', () => {
     })
 
     expectComposerCoveredByBlockingOverlay()
-    expect(document.activeElement).toBe(container.querySelector('[data-testid="allow-primary"]'))
+    expect(document.activeElement).toBe(navigationButton)
   })
 
   it('keeps the Side chat input fixed and pins streamed output to the bottom', () => {
