@@ -175,9 +175,17 @@ vi.mock('./WorkspaceMessageScroller', () => ({
 vi.mock('./PermissionApprovalControls', () => ({
   PermissionApprovalControls: ({ requests }: { requests: unknown[] }): React.JSX.Element | null =>
     requests.length > 0 ? (
-      <button type="button" data-testid="permission-approval-controls">
-        Approve permission
-      </button>
+      <div data-testid="permission-approval-controls">
+        <button type="button" data-testid="permission-impact-info">
+          Permission details
+        </button>
+        <button type="button" data-testid="allow-primary">
+          Allow
+        </button>
+        <button type="button" data-testid="deny-button">
+          Deny
+        </button>
+      </div>
     ) : null
 }))
 
@@ -810,9 +818,7 @@ describe('ConversationPanel composer intake', () => {
     })
 
     expectComposerCoveredByBlockingOverlay()
-    expect(document.activeElement).toBe(
-      container.querySelector('[data-testid="permission-approval-controls"]')
-    )
+    expect(document.activeElement).toBe(container.querySelector('[data-testid="allow-primary"]'))
 
     renderPanel({
       view: {
@@ -2462,9 +2468,7 @@ describe('ConversationPanel composer intake', () => {
     })
 
     expectComposerCoveredByBlockingOverlay()
-    expect(document.activeElement).toBe(
-      container.querySelector('[data-testid="permission-approval-controls"]')
-    )
+    expect(document.activeElement).toBe(container.querySelector('[data-testid="allow-primary"]'))
   })
 
   it('keeps the Side chat input fixed and pins streamed output to the bottom', () => {

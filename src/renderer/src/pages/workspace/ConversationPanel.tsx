@@ -167,8 +167,13 @@ const composerCancelButtonClassName = cn(
   composerInteractiveTransitionClassName
 )
 const composerContentClassName = 'mx-auto w-full max-w-4xl'
-const blockingFocusSelector =
-  '[data-blocking-primary-focus="true"], button:not([disabled]):not([data-resize-handle="true"]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [role="textbox"]:not([aria-disabled="true"]), [tabindex]:not([tabindex="-1"])'
+const blockingFocusSelectors = [
+  '[data-blocking-primary-focus="true"]',
+  '[data-testid="permission-approval-controls"] [data-testid="allow-primary"]:not(:disabled)',
+  '[data-testid="permission-approval-controls"] [data-testid="extra-option"]:not(:disabled)',
+  '[data-testid="permission-approval-controls"] [data-testid="deny-button"]:not(:disabled)',
+  'button:not([disabled]):not([data-resize-handle="true"]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [role="textbox"]:not([aria-disabled="true"]), [tabindex]:not([tabindex="-1"])'
+] as const
 const attachmentChipClassName =
   'flex h-9 min-w-0 max-w-[220px] items-center gap-2 rounded-lg border border-border-200 bg-bg-200 px-2 text-text-000'
 const attachmentRemoveButtonClassName = cn(
@@ -786,7 +791,12 @@ const ConversationPanel = ({
     if (!surface) return
     const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
     surface.scrollIntoView?.({ behavior: reducedMotion ? 'auto' : 'smooth', block: 'nearest' })
-    surface.querySelector<HTMLElement>(blockingFocusSelector)?.focus({ preventScroll: true })
+    for (const selector of blockingFocusSelectors) {
+      const target = surface.querySelector<HTMLElement>(selector)
+      if (!target) continue
+      target.focus({ preventScroll: true })
+      break
+    }
   }, [])
 
   const previousBlockingInteractionKeyRef = useRef<string | undefined>(undefined)
