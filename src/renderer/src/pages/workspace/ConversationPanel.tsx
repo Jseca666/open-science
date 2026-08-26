@@ -518,6 +518,7 @@ const ConversationPanel = ({
   const blockingComposerRef = useRef<HTMLDivElement | null>(null)
   const handledPendingPlanKeysRef = useRef(new Set<string>())
   const isMobile = useMediaQuery('(max-width: 767px)')
+  const activePreviewProjectId = usePreviewWorkbenchStore((state) => state.activeProjectId)
   const globalSearchShortcut = window.api?.platform === 'darwin' ? '⌘K' : 'Ctrl+K'
   // Local so the interrupted banner can show a spinner and block a double-resume until the request settles.
   const [resumingSessionId, setResumingSessionId] = useState<string>()
@@ -804,6 +805,9 @@ const ConversationPanel = ({
   // another preview, register the Plan tab passively and leave their current work untouched.
   useEffect(() => {
     if (!activeSession || !pendingPlan || !activePendingPlanKey) return
+    // Preview persistence restores the Project slice asynchronously. Wait until that slice is
+    // authoritative so restoration cannot replace this runtime-owned Plan tab after we mark it seen.
+    if (activePreviewProjectId !== activeSession.projectId) return
     const pendingKey = `${activeSession.id}:${activePendingPlanKey}`
     if (handledPendingPlanKeysRef.current.has(pendingKey)) return
     handledPendingPlanKeysRef.current.add(pendingKey)
@@ -827,7 +831,7 @@ const ConversationPanel = ({
       return
     }
     preview.upsertAndActivateItem(planItem)
-  }, [activePendingPlanKey, activeSession, isMobile, pendingPlan])
+  }, [activePendingPlanKey, activePreviewProjectId, activeSession, isMobile, pendingPlan])
 
   const hasTextDraft = draftDoc.nodes.some(
     (node) => node.type === 'text' && node.text.trim().length > 0

@@ -1662,6 +1662,11 @@ const areWorkspaceMessageScrollerPropsEqual = (
   (previous.canBranchInNewSession ?? false) === (next.canBranchInNewSession ?? false) &&
   (previous.reportPresentationRevealing ?? false) === (next.reportPresentationRevealing ?? false) &&
   previous.onBranchInNewSession === next.onBranchInNewSession &&
+  previous.onActivatePendingElicitation === next.onActivatePendingElicitation &&
+  (previous.pendingElicitations ?? []).length === (next.pendingElicitations ?? []).length &&
+  (previous.pendingElicitations ?? []).every((request, index) =>
+    Object.is(request, (next.pendingElicitations ?? [])[index])
+  ) &&
   previous.trailingContent === next.trailingContent &&
   previous.isResumingSession === next.isResumingSession &&
   previous.notebookReference?.sessionId === next.notebookReference?.sessionId &&

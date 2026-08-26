@@ -3222,6 +3222,7 @@ describe('ConversationPanel + menu', () => {
   it('auto-opens a new pending Plan once and keeps the bottom entry read-only', () => {
     renderPanel()
     expect(container.querySelector('[data-testid="menu-view-plan"]')).toBeNull()
+    act(() => usePreviewWorkbenchStore.getState().activateProject('project-a'))
 
     const session: ChatSession = {
       id: 'session-plan',
@@ -3345,7 +3346,7 @@ describe('ConversationPanel + menu', () => {
   })
 
   it('does not replace an actively viewed file when a pending Plan arrives', () => {
-    usePreviewWorkbenchStore.getState().upsertAndActivateItem({
+    const activeFile = {
       id: 'file:active-report',
       type: 'file',
       source: 'artifact',
@@ -3355,7 +3356,7 @@ describe('ConversationPanel + menu', () => {
       name: 'report.md',
       path: '/workspace/report.md',
       format: 'markdown'
-    })
+    } as const
     const session: ChatSession = {
       id: 'session-plan-with-file',
       projectId: 'project-a',
@@ -3375,16 +3376,24 @@ describe('ConversationPanel + menu', () => {
 
     renderPanel({ view: { activeSession: session, canEditDraft: false } })
 
+    const planItemId = `tool:${session.id}:plan:${completedPlanProjection.artifactVersionId}`
+    expect(usePreviewWorkbenchStore.getState().items.some((item) => item.id === planItemId)).toBe(
+      false
+    )
+
+    act(() => {
+      usePreviewWorkbenchStore.getState().activateProject('project-a', {
+        items: [activeFile],
+        activeItemId: activeFile.id,
+        panelState: 'open'
+      })
+    })
+
     expect(usePreviewWorkbenchStore.getState().activeItemId).toBe('file:active-report')
     expect(usePreviewWorkbenchStore.getState().panelState).toBe('open')
-    expect(
-      usePreviewWorkbenchStore
-        .getState()
-        .items.some(
-          (item) =>
-            item.id === `tool:${session.id}:plan:${completedPlanProjection.artifactVersionId}`
-        )
-    ).toBe(true)
+    expect(usePreviewWorkbenchStore.getState().items.some((item) => item.id === planItemId)).toBe(
+      true
+    )
     expect(container.textContent).toContain('Plan ready for review')
 
     act(() => {
@@ -3407,6 +3416,7 @@ describe('ConversationPanel + menu', () => {
         removeEventListener: vi.fn()
       }))
     )
+    act(() => usePreviewWorkbenchStore.getState().activateProject('project-a'))
     const session: ChatSession = {
       id: 'session-plan-mobile',
       projectId: 'project-a',
