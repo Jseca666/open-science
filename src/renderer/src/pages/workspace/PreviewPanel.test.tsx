@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { act, StrictMode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+import type { PanelSize } from 'react-resizable-panels'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
@@ -14,10 +15,31 @@ import { useNavigationStore } from '@/stores/navigation-store'
 import { useProjectStore } from '@/stores/project-store'
 import { useSessionStore, type ChatSession } from '@/stores/session-store'
 
+const resizablePanelHarness = vi.hoisted(() => ({
+  onResize: undefined as
+    | ((
+        panelSize: PanelSize,
+        panelId: string | number | undefined,
+        previousPanelSize: PanelSize | undefined
+      ) => void)
+    | undefined
+}))
+
 vi.mock('@/components/ui/resizable', () => ({
-  ResizablePanel: ({ children }: { children: React.ReactNode }): React.JSX.Element => (
-    <div>{children}</div>
-  )
+  ResizablePanel: ({
+    children,
+    onResize
+  }: {
+    children: React.ReactNode
+    onResize: (
+      panelSize: PanelSize,
+      panelId: string | number | undefined,
+      previousPanelSize: PanelSize | undefined
+    ) => void
+  }): React.JSX.Element => {
+    resizablePanelHarness.onResize = onResize
+    return <div>{children}</div>
+  }
 }))
 
 vi.mock('./previews/PreviewFileContent', () => ({
@@ -73,6 +95,7 @@ describe('PreviewPanel', () => {
 
   beforeEach(() => {
     usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
+    resizablePanelHarness.onResize = undefined
     releaseSourcePreview = vi.fn()
     window.api = {
       saveManagedFile: vi.fn().mockResolvedValue({ saved: true }),
@@ -134,6 +157,16 @@ describe('PreviewPanel', () => {
       })
     )
     await renderPanel()
+  }
+
+  const resizePanel = async (asPercentage: number): Promise<void> => {
+    await act(async () => {
+      resizablePanelHarness.onResize?.(
+        { asPercentage, inPixels: asPercentage * 10 },
+        'right-panel-resizable',
+        undefined
+      )
+    })
   }
 
   const openTabContextMenu = async (tabIndex: number): Promise<void> => {
@@ -338,15 +371,43 @@ describe('PreviewPanel', () => {
 
     const iframe = container.querySelector<HTMLIFrameElement>('[data-source-preview-frame]')
     await act(async () => usePreviewWorkbenchStore.getState().collapsePanel())
+    await resizePanel(0)
 
     expect(container.querySelector('[data-source-preview-frame]')).toBe(iframe)
     expect(iframe?.closest<HTMLElement>('[role="tabpanel"]')?.hidden).toBe(true)
     expect(releaseSourcePreview).not.toHaveBeenCalled()
 
     await act(async () => usePreviewWorkbenchStore.getState().togglePanel())
+    await resizePanel(40)
 
     expect(container.querySelector('[data-source-preview-frame]')).toBe(iframe)
     expect(iframe?.closest<HTMLElement>('[role="tabpanel"]')?.hidden).toBe(false)
+  })
+
+  it('keeps active file content mounted until the panel physically collapses', async () => {
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(createFileItem({}))
+
+    await renderPanel()
+
+    const content = container.querySelector('[data-testid="file-content"]')
+    const surface = container.querySelector<HTMLElement>('#right-panel')
+
+    await act(async () => usePreviewWorkbenchStore.getState().collapsePanel())
+
+    expect(container.querySelector('[data-testid="file-content"]')).toBe(content)
+    expect(surface?.getAttribute('aria-hidden')).toBeNull()
+
+    await resizePanel(0)
+
+    expect(container.querySelector('[data-testid="file-content"]')).toBeNull()
+    expect(surface?.getAttribute('aria-hidden')).toBe('true')
+    expect(surface?.hasAttribute('inert')).toBe(true)
+
+    await act(async () => usePreviewWorkbenchStore.getState().openPanel())
+    await resizePanel(40)
+
+    expect(container.querySelector('[data-testid="file-content"]')).not.toBeNull()
+    expect(surface?.getAttribute('aria-hidden')).toBeNull()
   })
 
   it('shows a two-pixel simulated loading bar until the source frame loads', async () => {
@@ -1030,19 +1091,6 @@ describe('PreviewPanel', () => {
 
     expect(usePreviewWorkbenchStore.getState().items.map((item) => item.id)).toEqual(['item-2'])
     expect(usePreviewWorkbenchStore.getState().activeItemId).toBe('item-2')
-  })
-
-  it('unmounts active preview content while the panel is collapsed', async () => {
-    usePreviewWorkbenchStore.getState().upsertAndActivateItem(createFileItem({}))
-
-    await renderPanel()
-    expect(container.querySelector('[data-testid="file-content"]')).not.toBeNull()
-
-    await act(async () => usePreviewWorkbenchStore.getState().collapsePanel())
-    expect(container.querySelector('[data-testid="file-content"]')).toBeNull()
-
-    await act(async () => usePreviewWorkbenchStore.getState().togglePanel())
-    expect(container.querySelector('[data-testid="file-content"]')).not.toBeNull()
   })
 
   it('collapses the panel full-screen preview after View in context navigates', async () => {

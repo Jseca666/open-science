@@ -42,7 +42,6 @@ type PreviewPanelProps = {
   minSize: string
   onResize: (panelSize: PanelSize, previousPanelSize: PanelSize | undefined) => void
   contentClassName?: string
-  contentHidden?: boolean
   restoredPlanResponder?: RestoredPlanResponder
 }
 
@@ -631,7 +630,6 @@ const PreviewPanelSurface = ({
 }: PreviewPanelSurfaceProps): React.JSX.Element => {
   const items = usePreviewWorkbenchStore((state) => state.items)
   const activeItemId = usePreviewWorkbenchStore((state) => state.activeItemId)
-  const panelState = usePreviewWorkbenchStore((state) => state.panelState)
   const activateItem = usePreviewWorkbenchStore((state) => state.activateItem)
   const removeItem = usePreviewWorkbenchStore((state) => state.removeItem)
   const removeOtherItems = usePreviewWorkbenchStore((state) => state.removeOtherItems)
@@ -728,7 +726,7 @@ const PreviewPanelSurface = ({
           />
         ) : null}
         {items.map((item) => {
-          const isActivePanel = item.id === activeItemId && panelState === 'open'
+          const isActivePanel = item.id === activeItemId && !hidden
           // Tool panels render at this map position whether active or not, so React keeps the
           // subtree mounted across tab switches. File panels re-create on activation anyway
           // (contentKey encodes path+mtime), so an inactive one collapses to an empty region.
@@ -794,14 +792,15 @@ const PreviewPanel = ({
   minSize,
   onResize,
   contentClassName,
-  contentHidden,
   restoredPlanResponder
 }: PreviewPanelProps): React.JSX.Element => {
+  const [contentHidden, setContentHidden] = useState(() => Number.parseFloat(defaultSize) <= 0)
   const handleResize = (
     panelSize: PanelSize,
     _panelId: string | number | undefined,
     previousPanelSize: PanelSize | undefined
   ): void => {
+    setContentHidden(panelSize.asPercentage <= 0)
     onResize(panelSize, previousPanelSize)
   }
 

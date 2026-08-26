@@ -583,7 +583,6 @@ const WorkspacePanelLayout = ({
                     ? 'pointer-events-none translate-x-2 opacity-0'
                     : 'translate-x-0 opacity-100'
                 }`}
-                contentHidden={preview.state === 'collapsed'}
                 restoredPlanResponder={restoredPlanResponder}
               />
             </>

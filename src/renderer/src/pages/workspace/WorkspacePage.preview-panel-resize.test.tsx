@@ -47,7 +47,6 @@ const workspacePageHarness = vi.hoisted(() => ({
   previewPanelDefaultSize: undefined as string | undefined,
   previewPanelMinSize: undefined as string | undefined,
   previewContentClassName: undefined as string | undefined,
-  previewContentHidden: undefined as boolean | undefined,
   previewOnResize: undefined as
     undefined | ((panelSize: PanelSize, previousPanelSize: PanelSize | undefined) => void),
   previewPanelRef: undefined as undefined | { current: PanelImperativeHandle | null },
@@ -227,21 +226,18 @@ vi.mock('./PreviewPanel', () => ({
     defaultSize,
     minSize,
     onResize,
-    contentClassName,
-    contentHidden
+    contentClassName
   }: {
     panelRef: React.Ref<PanelImperativeHandle>
     defaultSize: string
     minSize: string
     onResize: (panelSize: PanelSize, previousPanelSize: PanelSize | undefined) => void
     contentClassName?: string
-    contentHidden?: boolean
   }): React.JSX.Element => {
     workspacePageHarness.previewPanelDefaultSize = defaultSize
     workspacePageHarness.previewPanelMinSize = minSize
     workspacePageHarness.previewOnResize = onResize
     workspacePageHarness.previewContentClassName = contentClassName
-    workspacePageHarness.previewContentHidden = contentHidden
 
     if (typeof panelRef === 'function') {
       panelRef(workspacePageHarness.previewPanelHandle)
@@ -252,13 +248,7 @@ vi.mock('./PreviewPanel', () => ({
       workspacePageHarness.previewPanelRef.current = workspacePageHarness.previewPanelHandle
     }
 
-    return (
-      <div
-        data-testid="preview-panel"
-        aria-hidden={contentHidden ? true : undefined}
-        className={contentClassName}
-      />
-    )
+    return <div data-testid="preview-panel" className={contentClassName} />
   }
 }))
 
@@ -291,7 +281,6 @@ describe('WorkspacePage preview panel resize sync', () => {
     workspacePageHarness.previewPanelDefaultSize = undefined
     workspacePageHarness.previewPanelMinSize = undefined
     workspacePageHarness.previewContentClassName = undefined
-    workspacePageHarness.previewContentHidden = undefined
     workspacePageHarness.previewOnResize = undefined
     workspacePageHarness.previewPanelRef = undefined
     workspacePageHarness.previewPanelHandle.resize = vi.fn((size: number | string) => {
@@ -846,7 +835,6 @@ describe('WorkspacePage preview panel resize sync', () => {
 
     expect(workspacePageHarness.previewPanelDefaultSize).toBe('0%')
     expect(workspacePageHarness.previewPanelHandle.resize).toHaveBeenCalledWith('0%')
-    expect(workspacePageHarness.previewContentHidden).toBe(true)
   })
 
   it('retries once when the desktop panel layout is still registering', async () => {
@@ -1026,7 +1014,6 @@ describe('WorkspacePage preview panel resize sync', () => {
     expect(workspacePageHarness.previewContentClassName).toContain('duration-150')
     expect(workspacePageHarness.previewContentClassName).toContain('translate-x-0')
     expect(workspacePageHarness.previewContentClassName).toContain('opacity-100')
-    expect(workspacePageHarness.previewContentHidden).toBe(false)
   })
 
   it('does not collapse a detached preview panel after its content fade', async () => {
@@ -1224,7 +1211,6 @@ describe('WorkspacePage preview panel resize sync', () => {
 
     expect(getPreviewToggle().getAttribute('aria-expanded')).toBe('false')
     expect(usePreviewWorkbenchStore.getState().panelState).toBe('collapsed')
-    expect(workspacePageHarness.previewContentHidden).toBe(true)
     expect(workspacePageHarness.previewPanelHandle.resize).not.toHaveBeenCalledWith('0%')
 
     await act(async () => vi.advanceTimersByTime(150))
