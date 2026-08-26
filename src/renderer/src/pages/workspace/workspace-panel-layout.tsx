@@ -27,7 +27,7 @@ const OPEN_DIALOG_SELECTOR =
   '[role="dialog"]:not([data-state="closed"]), [role="alertdialog"]:not([data-state="closed"])'
 const PANEL_CONTENT_TRANSITION_MS = 150
 const PANEL_CONTENT_TRANSITION_CLASS_NAME =
-  'size-full min-w-0 transition-[opacity,transform] duration-150 ease-out motion-reduce:transition-none motion-reduce:transform-none'
+  'transition-[opacity,transform] duration-150 ease-out motion-reduce:transition-none motion-reduce:transform-none'
 
 const prefersReducedMotion = (): boolean =>
   window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true
@@ -530,7 +530,7 @@ const WorkspacePanelLayout = ({
                   data-testid="workspace-sidebar-content"
                   aria-hidden={sidebar.state === 'collapsed' ? true : undefined}
                   inert={sidebar.state === 'collapsed' ? true : undefined}
-                  className={`${PANEL_CONTENT_TRANSITION_CLASS_NAME} ${
+                  className={`size-full min-w-0 ${PANEL_CONTENT_TRANSITION_CLASS_NAME} ${
                     sidebar.state === 'collapsed'
                       ? 'pointer-events-none -translate-x-2 opacity-0'
                       : 'translate-x-0 opacity-100'

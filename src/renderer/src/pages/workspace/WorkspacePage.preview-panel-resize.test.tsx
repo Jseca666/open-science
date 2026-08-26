@@ -571,6 +571,8 @@ describe('WorkspacePage preview panel resize sync', () => {
     expect(content?.className).toContain('-translate-x-2')
     expect(content?.className).toContain('opacity-0')
     expect(content?.className).toContain('duration-150')
+    expect(content?.className).toContain('size-full')
+    expect(content?.className).toContain('min-w-0')
     expect(content?.hasAttribute('inert')).toBe(true)
     expect(workspacePageHarness.sidebarPanelHandle.resize).not.toHaveBeenCalled()
 
@@ -1012,6 +1014,7 @@ describe('WorkspacePage preview panel resize sync', () => {
     expect(workspacePageHarness.previewPanelHandle.resize).toHaveBeenCalledWith('40%')
     expect(workspacePageHarness.previewContentClassName).toContain('transition-[opacity,transform]')
     expect(workspacePageHarness.previewContentClassName).toContain('duration-150')
+    expect(workspacePageHarness.previewContentClassName).not.toContain('size-full')
     expect(workspacePageHarness.previewContentClassName).toContain('translate-x-0')
     expect(workspacePageHarness.previewContentClassName).toContain('opacity-100')
   })
