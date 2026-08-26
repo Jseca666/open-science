@@ -44,9 +44,11 @@ const PlanNoticeBanner = ({
   </div>
 )
 
+type PlanResponse = { decision: 'approved' | 'rejected' } | { feedback: string }
+
 type RestoredPlanResponder = Readonly<{
   sessionId: string
-  respond: (response: { decision: 'approved' | 'rejected' }) => Promise<void>
+  respond: (response: PlanResponse) => Promise<void>
 }>
 
 const lifecycleLabel = (projection: ActivePlanProjection, t: TFunction): string => {
@@ -114,42 +116,14 @@ const WorkspacePlanCard = ({
   stale = false,
   embedded = false,
   className = '',
-  onOpen,
-  onRespond,
-  onSubmitResponse,
-  onResolved
+  onOpen
 }: PlanSurfaceProps &
   Readonly<{
     onOpen: () => void
-    onRespond: (decision: 'approved' | 'rejected') => Promise<void>
-    onSubmitResponse?: (text: string) => Promise<void>
-    onResolved?: () => void
     embedded?: boolean
     className?: string
   }>): React.JSX.Element => {
   const { t } = useTranslation()
-
-  const decisionPending = projection.approval === 'pending' && !stale
-  const [responseText, setResponseText] = useState('')
-  const [decisionBusy, setDecisionBusy] = useState(false)
-  const [decisionError, setDecisionError] = useState<string>()
-  const projectionKey = `${projection.artifactVersionId}:${projection.revision}`
-  const [resolvedProjectionKey, setResolvedProjectionKey] = useState<string>()
-  const respond = async (decision: 'approved' | 'rejected'): Promise<void> => {
-    if (decisionBusy) return
-    setDecisionBusy(true)
-    setDecisionError(undefined)
-    try {
-      await onRespond(decision)
-      setResolvedProjectionKey(projectionKey)
-      onResolved?.()
-    } catch (error) {
-      setDecisionError(error instanceof Error ? error.message : t('Unable to update the Plan.'))
-    } finally {
-      setDecisionBusy(false)
-    }
-  }
-  if (resolvedProjectionKey === projectionKey) return <></>
   return (
     <article
       className={`overflow-hidden bg-card ${
@@ -157,7 +131,6 @@ const WorkspacePlanCard = ({
           ? 'rounded-none border-0 shadow-none'
           : 'rounded-lg border border-border shadow-card'
       } ${className}`}
-      aria-busy={decisionBusy}
     >
       {stale ? (
         <div className="border-b border-border bg-muted px-3.5 py-2 text-xs text-muted-foreground">
@@ -175,102 +148,20 @@ const WorkspacePlanCard = ({
               {projection.document.task_summary}
             </div>
           </div>
-          <div className="flex shrink-0 items-center gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              className="[@media(pointer:coarse)]:h-11"
-              onClick={onOpen}
-            >
-              {t('Open')}
-            </Button>
-            {decisionPending ? (
-              <Button
-                type="button"
-                className="[@media(pointer:coarse)]:h-11"
-                disabled={decisionBusy}
-                onClick={() => void respond('approved')}
-              >
-                {t('Approve')}
-              </Button>
-            ) : null}
-          </div>
+          <Button
+            type="button"
+            variant="outline"
+            className="shrink-0 [@media(pointer:coarse)]:h-11"
+            data-blocking-primary-focus="true"
+            onClick={onOpen}
+          >
+            {t('View plan')}
+          </Button>
         </div>
         <div className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-bg-200 px-2 py-1 text-[11px] font-medium text-text-100">
           <span className="size-1.5 rounded-full bg-text-300" aria-hidden="true" />
           {t(planConfidenceLabelKey(projection.document.feasibility.confidence))}
         </div>
-        {decisionPending ? (
-          <form
-            className="mt-3 border-t border-border pt-3"
-            onSubmit={(event) => {
-              event.preventDefault()
-              if (decisionBusy) return
-              const text = responseText.trim()
-              if (!text) return
-              setDecisionBusy(true)
-              setDecisionError(undefined)
-              void (
-                onSubmitResponse?.(text) ??
-                Promise.reject(new Error(t('Unable to send Plan feedback.')))
-              )
-                .then(() => {
-                  setResponseText('')
-                  setResolvedProjectionKey(projectionKey)
-                  onResolved?.()
-                })
-                .catch((error: unknown) =>
-                  setDecisionError(
-                    error instanceof Error ? error.message : t('Unable to update the Plan.')
-                  )
-                )
-                .finally(() => setDecisionBusy(false))
-            }}
-          >
-            <label className="sr-only" htmlFor={`plan-response-${projection.artifactVersionId}`}>
-              {t('Respond to Plan')}
-            </label>
-            <div className="flex items-start gap-2">
-              <span
-                className="grid size-9 shrink-0 place-items-center rounded-lg bg-bg-100 text-text-300"
-                aria-hidden="true"
-              >
-                <Pencil className="size-4" strokeWidth={1.75} />
-              </span>
-              <Textarea
-                id={`plan-response-${projection.artifactVersionId}`}
-                rows={1}
-                aria-invalid={decisionError ? true : undefined}
-                aria-describedby={
-                  decisionError ? `plan-response-error-${projection.artifactVersionId}` : undefined
-                }
-                className="max-h-40 min-h-9 min-w-0 flex-1 resize-none border-0 bg-transparent px-0 py-1.5 text-[15px] leading-6 shadow-none focus-visible:border-transparent dark:bg-transparent"
-                placeholder={t('Describe changes to the Plan…')}
-                value={responseText}
-                disabled={decisionBusy}
-                onChange={(event) => setResponseText(event.target.value)}
-              />
-              <Button
-                type="submit"
-                variant="outline"
-                size="icon-lg"
-                aria-label={t('Send Plan feedback')}
-                disabled={decisionBusy || responseText.trim().length === 0}
-              >
-                <CornerDownLeft className="size-4" strokeWidth={1.75} aria-hidden="true" />
-              </Button>
-            </div>
-            {decisionError ? (
-              <p
-                id={`plan-response-error-${projection.artifactVersionId}`}
-                role="alert"
-                className="mt-1 pl-11 text-xs text-destructive"
-              >
-                {decisionError}
-              </p>
-            ) : null}
-          </form>
-        ) : null}
       </div>
     </article>
   )
@@ -328,7 +219,7 @@ type PlanPreviewSurfaceProps = PlanSurfaceProps &
     // Real on-disk artifact filename, offered as selectable text so users can copy it.
     planFilename?: string
     onDownload?: () => Promise<void>
-    onRespond?: (decision: 'approved' | 'rejected') => Promise<void>
+    onRespond?: (response: PlanResponse) => Promise<void>
     onToggleFullScreen?: () => void
   }>
 
@@ -508,21 +399,30 @@ const PlanPreviewSurface = ({
   const { t } = useTranslation()
 
   const planDocument = validatedPreviewDocument(projection.document)
-  const decisionInFlightRef = useRef(false)
-  const [decisionBusy, setDecisionBusy] = useState(false)
+  const responseInFlightRef = useRef(false)
+  const [responseBusy, setResponseBusy] = useState(false)
+  const [responseText, setResponseText] = useState('')
+  const [responseError, setResponseError] = useState<string>()
   const projectionKey = `${projection.artifactVersionId}:${projection.revision}`
   const [resolvedProjectionKey, setResolvedProjectionKey] = useState<string>()
+  const responsePending =
+    Boolean(planDocument && !stale && projection.approval === 'pending' && onRespond) &&
+    resolvedProjectionKey !== projectionKey
 
-  const respond = async (decision: 'approved' | 'rejected'): Promise<void> => {
-    if (!onRespond || decisionInFlightRef.current) return
-    decisionInFlightRef.current = true
-    setDecisionBusy(true)
+  const respond = async (response: PlanResponse): Promise<void> => {
+    if (!onRespond || responseInFlightRef.current) return
+    responseInFlightRef.current = true
+    setResponseBusy(true)
+    setResponseError(undefined)
     try {
-      await onRespond(decision)
+      await onRespond(response)
+      setResponseText('')
       setResolvedProjectionKey(projectionKey)
+    } catch (error) {
+      setResponseError(error instanceof Error ? error.message : t('Unable to update the Plan.'))
     } finally {
-      decisionInFlightRef.current = false
-      setDecisionBusy(false)
+      responseInFlightRef.current = false
+      setResponseBusy(false)
     }
   }
 
@@ -543,7 +443,7 @@ const PlanPreviewSurface = ({
     })
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-bg-10 text-foreground" aria-busy={decisionBusy}>
+    <div className="flex h-full min-h-0 flex-col bg-bg-10 text-foreground" aria-busy={responseBusy}>
       {/* Mirrors the artifact preview header: the real artifact filename as selectable text,
           separated from the content by the header border. Never a fabricated name — the
           Artifact Version id is not the on-disk file name. Falls back to the document label
@@ -565,29 +465,6 @@ const PlanPreviewSurface = ({
             <Download className="size-4" aria-hidden="true" />
             {t('Download')}
           </Button>
-          {planDocument &&
-          !stale &&
-          projection.approval === 'pending' &&
-          resolvedProjectionKey !== projectionKey &&
-          onRespond ? (
-            <>
-              <Button
-                type="button"
-                variant="outline"
-                disabled={decisionBusy}
-                onClick={() => void respond('rejected')}
-              >
-                {t('Dismiss')}
-              </Button>
-              <Button
-                type="button"
-                disabled={decisionBusy}
-                onClick={() => void respond('approved')}
-              >
-                {t('Approve')}
-              </Button>
-            </>
-          ) : null}
           {onToggleFullScreen ? (
             <TooltipProvider delayDuration={200}>
               <Tooltip>
@@ -645,6 +522,81 @@ const PlanPreviewSurface = ({
           </div>
         </div>
       )}
+      {responsePending ? (
+        <form
+          className="shrink-0 border-t border-border bg-bg-000 p-3"
+          onSubmit={(event) => {
+            event.preventDefault()
+            const feedback = responseText.trim()
+            if (feedback) void respond({ feedback })
+          }}
+        >
+          <label
+            className="sr-only"
+            htmlFor={`plan-preview-response-${projection.artifactVersionId}`}
+          >
+            {t('Respond to Plan')}
+          </label>
+          <div className="flex items-start gap-2">
+            <span
+              className="grid size-9 shrink-0 place-items-center rounded-lg bg-bg-100 text-text-300"
+              aria-hidden="true"
+            >
+              <Pencil className="size-4" strokeWidth={1.75} />
+            </span>
+            <Textarea
+              id={`plan-preview-response-${projection.artifactVersionId}`}
+              rows={1}
+              aria-invalid={responseError ? true : undefined}
+              aria-describedby={
+                responseError
+                  ? `plan-preview-response-error-${projection.artifactVersionId}`
+                  : undefined
+              }
+              className="max-h-32 min-h-9 min-w-0 flex-1 resize-none"
+              placeholder={t('Describe changes to the Plan…')}
+              value={responseText}
+              disabled={responseBusy}
+              onChange={(event) => setResponseText(event.target.value)}
+            />
+            <Button
+              type="submit"
+              variant="outline"
+              size="icon-lg"
+              aria-label={t('Send Plan feedback')}
+              disabled={responseBusy || responseText.trim().length === 0}
+            >
+              <CornerDownLeft className="size-4" strokeWidth={1.75} aria-hidden="true" />
+            </Button>
+          </div>
+          {responseError ? (
+            <p
+              id={`plan-preview-response-error-${projection.artifactVersionId}`}
+              role="alert"
+              className="mt-1 pl-11 text-xs text-destructive"
+            >
+              {responseError}
+            </p>
+          ) : null}
+          <div className="mt-2 flex justify-end gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={responseBusy}
+              onClick={() => void respond({ decision: 'rejected' })}
+            >
+              {t('Discard')}
+            </Button>
+            <Button
+              type="button"
+              disabled={responseBusy}
+              onClick={() => void respond({ decision: 'approved' })}
+            >
+              {t('Approve')}
+            </Button>
+          </div>
+        </form>
+      ) : null}
     </div>
   )
 }
@@ -656,4 +608,4 @@ export {
   PlanProgressChip,
   WorkspacePlanCard
 }
-export type { RestoredPlanResponder }
+export type { PlanResponse, RestoredPlanResponder }

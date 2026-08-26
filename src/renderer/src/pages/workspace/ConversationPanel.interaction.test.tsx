@@ -147,31 +147,38 @@ vi.mock('@/components/RemoteJobBadge', () => ({
 vi.mock('./WorkspaceMessageScroller', () => ({
   WorkspaceMessageScroller: ({
     isResumingSession,
-    pendingElicitations = []
+    pendingElicitations = [],
+    onActivatePendingElicitation
   }: {
     isResumingSession?: boolean
     pendingElicitations?: unknown[]
+    onActivatePendingElicitation?: () => void
   }): React.JSX.Element => (
     <>
       {isResumingSession ? (
         <span data-testid="resume-progress-indicator">Resuming session</span>
       ) : null}
       <span data-testid="scroller-pending-elicitations">{pendingElicitations.length}</span>
+      {pendingElicitations.length > 0 ? (
+        <button
+          type="button"
+          data-testid="scroller-pending-elicitation"
+          onClick={onActivatePendingElicitation}
+        >
+          Awaiting your answer…
+        </button>
+      ) : null}
     </>
   )
 }))
 
 vi.mock('./PermissionApprovalControls', () => ({
   PermissionApprovalControls: ({ requests }: { requests: unknown[] }): React.JSX.Element | null =>
-    requests.length > 0 ? <span data-testid="permission-approval-controls" /> : null
-}))
-
-const { respondToSessionPlanMock } = vi.hoisted(() => ({
-  respondToSessionPlanMock: vi.fn().mockResolvedValue(undefined)
-}))
-
-vi.mock('./session-plan/respond-to-session-plan', () => ({
-  respondToSessionPlan: respondToSessionPlanMock
+    requests.length > 0 ? (
+      <button type="button" data-testid="permission-approval-controls">
+        Approve permission
+      </button>
+    ) : null
 }))
 
 let container: HTMLDivElement
@@ -671,7 +678,6 @@ beforeEach(() => {
   document.body.appendChild(container)
   root = createRoot(container)
   onStageAttachmentFiles.mockClear()
-  respondToSessionPlanMock.mockReset().mockResolvedValue(undefined)
   usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
   useSettingsStore.setState(createInitialSettingsState())
   useSpecialistStore.setState({ items: [], isLoaded: true })
@@ -783,7 +789,7 @@ describe('ConversationPanel composer intake', () => {
     expect(document.activeElement).toBe(getComposerEditor())
   })
 
-  it('does not focus the hidden composer while a blocking interaction owns its lane', () => {
+  it('moves focus into a blocking interaction and restores it after resolution', () => {
     renderPanel({
       view: {
         composerFocusKey: 'session-a'
@@ -804,7 +810,18 @@ describe('ConversationPanel composer intake', () => {
     })
 
     expectComposerCoveredByBlockingOverlay()
-    expect(document.activeElement).toBe(navigationButton)
+    expect(document.activeElement).toBe(
+      container.querySelector('[data-testid="permission-approval-controls"]')
+    )
+
+    renderPanel({
+      view: {
+        composerFocusKey: 'session-blocked'
+      },
+      permissions: { requests: [] }
+    })
+
+    expect(document.activeElement).toBe(getComposerEditor())
   })
 
   it('does not refocus the composer when draft editing becomes available', () => {
@@ -1145,6 +1162,19 @@ describe('ConversationPanel composer intake', () => {
       '[data-elicitation-option-row="true"]'
     )
     expect(optionRows).toHaveLength(2)
+    expect(container.querySelectorAll('[data-testid="elicitation-choice-mode"]')).toHaveLength(1)
+
+    const navigationButton = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Open navigation"]'
+    )!
+    navigationButton.focus()
+    act(() => {
+      container
+        .querySelector<HTMLButtonElement>('[data-testid="scroller-pending-elicitation"]')
+        ?.click()
+    })
+    expect(document.activeElement).toBe(optionRows[0])
+
     ;(elicitationComposer as HTMLElement).getBoundingClientRect = () => ({ height: 480 }) as DOMRect
     scrollSurface.getBoundingClientRect = () => ({ top: 32 }) as DOMRect
     optionRows[1].getBoundingClientRect = () => ({ bottom: 180 }) as DOMRect
@@ -2432,7 +2462,9 @@ describe('ConversationPanel composer intake', () => {
     })
 
     expectComposerCoveredByBlockingOverlay()
-    expect(document.activeElement).toBe(navigationButton)
+    expect(document.activeElement).toBe(
+      container.querySelector('[data-testid="permission-approval-controls"]')
+    )
   })
 
   it('keeps the Side chat input fixed and pins streamed output to the bottom', () => {
@@ -3187,7 +3219,7 @@ describe('ConversationPanel + menu', () => {
     ).toBe(true)
   })
 
-  it('covers the composer with a pending Plan card and restores it immediately after approval', async () => {
+  it('auto-opens a new pending Plan once and keeps the bottom entry read-only', () => {
     renderPanel()
     expect(container.querySelector('[data-testid="menu-view-plan"]')).toBeNull()
 
@@ -3240,11 +3272,17 @@ describe('ConversationPanel + menu', () => {
     expect(planComposer).not.toBeNull()
     expect(planScrollSurface.classList.contains('overflow-y-auto')).toBe(true)
     expect(planResizeHandle).not.toBeNull()
+    expect(container.querySelector('[data-testid="plan-composer"] textarea')).toBeNull()
     expect(
-      [...container.querySelectorAll<HTMLButtonElement>('button')].some(
-        (button) => button.textContent === 'Dismiss'
-      )
-    ).toBe(false)
+      container.querySelector('[data-testid="plan-composer"] button[type="submit"]')
+    ).toBeNull()
+    expect(
+      [
+        ...container.querySelectorAll<HTMLButtonElement>(
+          '[data-testid="plan-composer"] button:not([aria-label^="Resize"])'
+        )
+      ].map((button) => button.textContent)
+    ).toEqual(['View plan'])
     expectComposerChromeCovered('[aria-label="Open notebook"]')
     expectComposerChromeCovered('[data-testid="remote-job-badge"]')
     const pendingPlanCard = [...container.querySelectorAll('article')].find((article) =>
@@ -3273,31 +3311,21 @@ describe('ConversationPanel + menu', () => {
     })
     expect(planComposer.style.height).toBe('260px')
 
-    act(() => {
-      ;[...container.querySelectorAll<HTMLButtonElement>('button')]
-        .find((button) => button.textContent === 'Open')
-        ?.click()
-    })
     expect(usePreviewWorkbenchStore.getState().panelState).toBe('open')
-    // The pending card's Open must reuse the version-scoped Plan tab id, so the bottom
+    // Auto-open and the bottom entry reuse one version-scoped Plan tab.
     // progress chip and the "view plan" menu entry land on this same tab instead of a duplicate.
     expect(usePreviewWorkbenchStore.getState().activeItemId).toBe(
       `tool:${session.id}:plan:${completedPlanProjection.artifactVersionId}`
     )
+    const firstOpenRequestVersion = usePreviewWorkbenchStore.getState().openRequestVersion
 
-    await act(async () => {
-      ;[...container.querySelectorAll<HTMLButtonElement>('button')]
-        .find((button) => button.textContent === 'Approve')
-        ?.click()
-      await Promise.resolve()
+    renderPanel({
+      view: {
+        activeSession: session,
+        canEditDraft: false
+      }
     })
-
-    expect(container.textContent).not.toContain('Plan ready for review')
-    expect(
-      container.querySelector('[role="textbox"]')?.closest('form')?.classList.contains('hidden')
-    ).toBe(false)
-    expect(container.querySelector('[aria-label="Open notebook"]')).not.toBeNull()
-    expect(container.querySelector('[data-testid="remote-job-badge"]')).not.toBeNull()
+    expect(usePreviewWorkbenchStore.getState().openRequestVersion).toBe(firstOpenRequestVersion)
 
     renderPanel({
       view: {
@@ -3312,14 +3340,26 @@ describe('ConversationPanel + menu', () => {
     expect(
       container.querySelector('[role="textbox"]')?.closest('form')?.classList.contains('hidden')
     ).toBe(false)
+    expect(document.activeElement).toBe(getComposerEditor())
     expect(container.querySelector('[data-testid="menu-view-plan"]')).not.toBeNull()
   })
 
-  it('routes Plan revision notes through the blocked Plan interaction', async () => {
-    const session: ChatSession = {
-      id: 'session-plan-feedback',
+  it('does not replace an actively viewed file when a pending Plan arrives', () => {
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem({
+      id: 'file:active-report',
+      type: 'file',
+      source: 'artifact',
+      sessionId: 'session-file-owner',
       projectId: 'project-a',
-      title: 'Plan feedback',
+      title: 'report.md',
+      name: 'report.md',
+      path: '/workspace/report.md',
+      format: 'markdown'
+    })
+    const session: ChatSession = {
+      id: 'session-plan-with-file',
+      projectId: 'project-a',
+      title: 'Plan without takeover',
       cwd: '/workspace',
       status: 'waiting-plan-approval',
       activeRun: { promptMessageId: 'interaction-1', startedAt: 1 },
@@ -3332,121 +3372,74 @@ describe('ConversationPanel + menu', () => {
         lifecycle: 'awaiting_approval'
       }
     }
-    renderPanel({
-      view: {
-        activeSession: session,
-        canEditDraft: false
-      }
-    })
 
-    const textarea = container.querySelector('textarea') as HTMLTextAreaElement
-    await act(async () => {
-      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
-      setter?.call(textarea, 'Split the analysis by cohort.')
-      textarea.dispatchEvent(new Event('input', { bubbles: true }))
-      textarea
-        .closest('form')
-        ?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
-      await Promise.resolve()
-    })
+    renderPanel({ view: { activeSession: session, canEditDraft: false } })
 
-    expect(respondToSessionPlanMock).toHaveBeenCalledWith(
-      expect.objectContaining({ projectId: 'project-a', sessionId: 'session-plan-feedback' }),
-      { feedback: 'Split the analysis by cohort.' }
-    )
-  })
-
-  it('routes approval-like card text as a user Message instead of a UI decision', async () => {
-    const session: ChatSession = {
-      id: 'session-plan-text-approval',
-      projectId: 'project-a',
-      title: 'Plan text approval',
-      cwd: '/workspace',
-      status: 'waiting-plan-approval',
-      activeRun: { promptMessageId: 'interaction-1', startedAt: 1 },
-      messages: planOriginMessages(),
-      createdAt: 1,
-      updatedAt: 2,
-      activePlanProjection: {
-        ...completedPlanProjection,
-        approval: 'pending',
-        lifecycle: 'awaiting_approval'
-      }
-    }
-    renderPanel({
-      view: {
-        activeSession: session,
-        canEditDraft: false
-      }
-    })
-
-    const textarea = container.querySelector('textarea') as HTMLTextAreaElement
-    await act(async () => {
-      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
-      setter?.call(textarea, 'Approved for execution')
-      textarea.dispatchEvent(new Event('input', { bubbles: true }))
-      textarea
-        .closest('form')
-        ?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
-      await Promise.resolve()
-    })
-
-    expect(respondToSessionPlanMock).toHaveBeenCalledWith(
-      expect.objectContaining({ sessionId: 'session-plan-text-approval' }),
-      { feedback: 'Approved for execution' }
-    )
-  })
-
-  it('reopens an actionable Plan card after restart without reviving the expired interaction', async () => {
-    const onRespondToRestoredPlan = vi.fn().mockResolvedValue(undefined)
-    const session: ChatSession = {
-      id: 'session-orphaned-plan',
-      projectId: 'project-a',
-      title: 'Orphaned pending Plan',
-      cwd: '/workspace',
-      status: 'waiting-plan-approval',
-      messages: planOriginMessages(),
-      createdAt: 1,
-      updatedAt: 2,
-      activePlanProjection: {
-        ...completedPlanProjection,
-        approval: 'pending',
-        lifecycle: 'awaiting_approval'
-      }
-    }
-
-    renderPanel({
-      view: {
-        activeSession: session,
-        canEditDraft: false
-      },
-      conversation: {
-        actions: {
-          submit: {
-            restoredPlan: onRespondToRestoredPlan
-          }
-        }
-      }
-    })
-
+    expect(usePreviewWorkbenchStore.getState().activeItemId).toBe('file:active-report')
+    expect(usePreviewWorkbenchStore.getState().panelState).toBe('open')
+    expect(
+      usePreviewWorkbenchStore
+        .getState()
+        .items.some(
+          (item) =>
+            item.id === `tool:${session.id}:plan:${completedPlanProjection.artifactVersionId}`
+        )
+    ).toBe(true)
     expect(container.textContent).toContain('Plan ready for review')
-    expectComposerCoveredByBlockingOverlay()
 
-    const textarea = container.querySelector('textarea') as HTMLTextAreaElement
-    await act(async () => {
-      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
-      setter?.call(textarea, 'Split the analysis by cohort.')
-      textarea.dispatchEvent(new Event('input', { bubbles: true }))
-      textarea
-        .closest('form')
-        ?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
-      await Promise.resolve()
+    act(() => {
+      ;[...container.querySelectorAll<HTMLButtonElement>('button')]
+        .find((button) => button.textContent === 'View plan')
+        ?.click()
     })
+    expect(usePreviewWorkbenchStore.getState().activeItemId).toBe(
+      `tool:${session.id}:plan:${completedPlanProjection.artifactVersionId}`
+    )
+  })
 
-    expect(onRespondToRestoredPlan).toHaveBeenCalledWith({
-      feedback: 'Split the analysis by cohort.'
+  it('registers a pending Plan without auto-opening it on mobile', () => {
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn((query: string) => ({
+        matches: query === '(max-width: 767px)',
+        media: query,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn()
+      }))
+    )
+    const session: ChatSession = {
+      id: 'session-plan-mobile',
+      projectId: 'project-a',
+      title: 'Plan on mobile',
+      cwd: '/workspace',
+      status: 'waiting-plan-approval',
+      activeRun: { promptMessageId: 'interaction-1', startedAt: 1 },
+      messages: planOriginMessages(),
+      createdAt: 1,
+      updatedAt: 2,
+      activePlanProjection: {
+        ...completedPlanProjection,
+        approval: 'pending',
+        lifecycle: 'awaiting_approval'
+      }
+    }
+
+    renderPanel({ view: { activeSession: session, canEditDraft: false } })
+
+    const planItemId = `tool:${session.id}:plan:${completedPlanProjection.artifactVersionId}`
+    expect(usePreviewWorkbenchStore.getState().panelState).toBe('collapsed')
+    expect(usePreviewWorkbenchStore.getState().activeItemId).toBe(planItemId)
+    expect(usePreviewWorkbenchStore.getState().items.some((item) => item.id === planItemId)).toBe(
+      true
+    )
+
+    act(() => {
+      ;[...container.querySelectorAll<HTMLButtonElement>('button')]
+        .find((button) => button.textContent === 'View plan')
+        ?.click()
     })
-    expect(respondToSessionPlanMock).not.toHaveBeenCalled()
+    expect(usePreviewWorkbenchStore.getState().panelState).toBe('open')
+    expect(usePreviewWorkbenchStore.getState().activeItemId).toBe(planItemId)
   })
 
   it('shows only the authoritative Plan on its Message Branch while retaining an open Preview', () => {
@@ -3537,48 +3530,6 @@ describe('ConversationPanel + menu', () => {
     expect(usePreviewWorkbenchStore.getState().activeItemId).toBe(
       'tool:session-plan-branches:plan:version-b'
     )
-  })
-
-  it('routes restored Plan approval through the durable decision API', async () => {
-    const session: ChatSession = {
-      id: 'session-restored-approved',
-      projectId: 'project-a',
-      title: 'Restored pending Plan',
-      cwd: '/workspace',
-      status: 'waiting-plan-approval',
-      messages: planOriginMessages(),
-      createdAt: 1,
-      updatedAt: 2,
-      activePlanProjection: {
-        ...completedPlanProjection,
-        approval: 'pending',
-        lifecycle: 'awaiting_approval'
-      }
-    }
-    const onRespondToRestoredPlan = vi.fn().mockResolvedValue(undefined)
-    renderPanel({
-      view: {
-        activeSession: session,
-        canEditDraft: false
-      },
-      conversation: {
-        actions: {
-          submit: {
-            restoredPlan: onRespondToRestoredPlan
-          }
-        }
-      }
-    })
-
-    await act(async () => {
-      ;[...container.querySelectorAll<HTMLButtonElement>('button')]
-        .find((button) => button.textContent === 'Approve')
-        ?.click()
-      await Promise.resolve()
-    })
-
-    expect(onRespondToRestoredPlan).toHaveBeenCalledWith({ decision: 'approved' })
-    expect(respondToSessionPlanMock).not.toHaveBeenCalled()
   })
 
   it('Attach files item triggers the hidden file input (onStageAttachmentFiles path)', () => {

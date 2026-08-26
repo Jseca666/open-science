@@ -137,6 +137,7 @@ type WorkspaceElicitationCardProps = {
   embedded?: boolean
   onRespond?: (response: ElicitationResponse) => Promise<void>
   onDraftChange?: (answers: ElicitationAnswer[]) => void
+  onPendingActivate?: () => void
 }
 
 const answerForChoiceQuestion = (
@@ -185,7 +186,8 @@ const WorkspaceElicitationCard = ({
   variant = 'default',
   embedded = false,
   onRespond,
-  onDraftChange
+  onDraftChange,
+  onPendingActivate
 }: WorkspaceElicitationCardProps): React.JSX.Element => {
   const { t } = useTranslation()
   const choiceQuestions = request ? resolveAgentUserChoiceQuestions(request.fields) : undefined
@@ -557,10 +559,19 @@ const WorkspaceElicitationCard = ({
         </div>
       )}
 
-      {isPendingPlaceholder ? (
+      {isPendingPlaceholder && onPendingActivate ? (
+        <button
+          type="button"
+          data-testid="elicitation-pending-placeholder"
+          className="mt-2 rounded-md text-left text-sm leading-5 text-text-300 hover:text-text-100 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+          onClick={onPendingActivate}
+        >
+          {t('Awaiting your answer…')}
+        </button>
+      ) : isPendingPlaceholder ? (
         <p
           data-testid="elicitation-pending-placeholder"
-          className="mt-2 text-sm italic leading-5 text-text-300"
+          className="mt-2 text-sm leading-5 text-text-300"
         >
           {t('Awaiting your answer…')}
         </p>

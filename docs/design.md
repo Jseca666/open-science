@@ -627,6 +627,10 @@ colors communicate a successful or failed probe/migration result.
 - Blocking interactions own the composer lane in this order: an already-open Side Chat, Permission
   approval, Ask-User elicitation, Plan approval, then the ordinary composer. Closing Side Chat reveals
   any still-pending Permission approval instead of interrupting the Side Chat in progress.
+- When a blocking interaction becomes active, move focus to its first reasonable control without
+  focusing the resize handle. When it resolves, restore focus to the ordinary composer. If one
+  blocking interaction immediately reveals another, move focus directly to the newly active surface
+  instead of briefly returning it to the composer.
 - Side Chat, Permission, Ask User, and Plan surfaces overlay the ordinary composer lane and the
   transcript above it. Keep the ordinary composer and its status chrome in layout but visually and
   interactively hidden while the overlay is open, so opening, resizing, resolving, or closing a
@@ -643,12 +647,19 @@ colors communicate a successful or failed probe/migration result.
   handle, not the full hit-area background.
 - Ask-User elicitation uses the same content-bounded bottom resize behavior. Key the resize shell to
   the elicitation request so a new question starts at its natural height instead of inheriting the
-  previous question's manual height.
+  previous question's manual height. Its pending transcript record is read-only; while that question
+  owns the bottom lane, activating the compact `Awaiting your answer…` record scrolls to and focuses
+  the first reasonable control in the bottom question panel. After settlement, remove the bottom
+  panel and retain the complete answered, declined, or cancelled transcript record.
 - Plan approval uses the same content-bounded bottom panel shell and single-border embedded surface.
   Its compact summary normally has no hidden overflow, so the top resize handle cannot stretch it
-  into empty space. The card shows the Plan lifecycle, task summary, confidence, and inline revision
-  field; keep only Open and Approve in its top action group. Open activates the Plan in the right
-  Preview panel, where the complete Plan and the separate Dismiss action remain available.
+  into empty space. The card shows the Plan lifecycle, task summary, confidence, and one `View plan`
+  action; it never duplicates approval, discard, or feedback controls. On desktop, the right Preview
+  is the only Plan response surface and owns Approve, Discard, and revision feedback. Auto-open each
+  newly pending Plan version once when Preview is idle or already showing that Plan, but never replace
+  a file, Notebook, artifact, dialog, or other Preview the user is actively viewing. In that case,
+  leave the compact bottom entry for explicit navigation. On mobile, use the existing Preview Sheet
+  as that single response surface and do not auto-open it.
 - While Permission
   approval, Ask-User elicitation, or Plan approval owns the composer lane, hide the Notebook, jobs,
   and Plan status chrome above it. Restore that status chrome only with the ordinary composer.

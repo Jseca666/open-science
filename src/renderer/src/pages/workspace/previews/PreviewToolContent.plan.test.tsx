@@ -228,7 +228,7 @@ describe('Plan Preview workbench integration', () => {
     )
 
     expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull()
-    expect(screen.queryByRole('button', { name: 'Dismiss' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Discard' })).toBeNull()
     expect(screen.getByText(/original Agent interaction has ended/u)).toBeTruthy()
     expect(screen.getByText('Session Plan')).toBeTruthy()
   })
@@ -356,7 +356,7 @@ describe('Plan Preview workbench integration', () => {
       />
     )
 
-    expect(screen.queryByRole('button', { name: 'Dismiss' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Discard' })).toBeNull()
     rerender(
       <PreviewToolContent
         item={item}
@@ -367,7 +367,7 @@ describe('Plan Preview workbench integration', () => {
       />
     )
 
-    fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Discard' }))
     await waitFor(() =>
       expect(respondToRestoredPlan).toHaveBeenCalledWith({ decision: 'rejected' })
     )
@@ -391,6 +391,6 @@ describe('Plan Preview workbench integration', () => {
     )
 
     expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull()
-    expect(screen.queryByRole('button', { name: 'Dismiss' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Discard' })).toBeNull()
   })
 })

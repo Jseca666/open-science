@@ -89,42 +89,26 @@ const multiLevelProjection: ActivePlanProjection = {
 }
 
 describe('Session Plan renderer surfaces', () => {
-  it('renders the compact English proposal card and shares approval with Open', () => {
+  it('renders a compact read-only review entry with no duplicate submission controls', () => {
     const onOpen = vi.fn()
-    const onRespond = vi.fn().mockResolvedValue(undefined)
-    render(<WorkspacePlanCard projection={projection} onOpen={onOpen} onRespond={onRespond} />)
+    render(<WorkspacePlanCard projection={projection} onOpen={onOpen} />)
 
     expect(screen.getByText('Plan ready for review')).toBeTruthy()
     expect(screen.getByText('Analyze one dataset')).toBeTruthy()
     expect(screen.queryByText('1 phase · 1 delegation · 1 step')).toBeNull()
     expect(screen.getByText(/high confidence/u)).toBeTruthy()
-    expect(screen.queryByRole('button', { name: 'Dismiss' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Discard' })).toBeNull()
+    expect(screen.queryByLabelText('Respond to Plan')).toBeNull()
     expect(screen.getAllByRole('button').every((button) => button.dataset.slot === 'button')).toBe(
       true
     )
-    expect(screen.getByLabelText('Respond to Plan').dataset.slot).toBe('textarea')
-    fireEvent.click(screen.getByRole('button', { name: 'Open' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Approve' }))
+    fireEvent.click(screen.getByRole('button', { name: 'View plan' }))
     expect(onOpen).toHaveBeenCalledOnce()
-    expect(onRespond).toHaveBeenCalledWith('approved')
-  })
-
-  it('removes the compact card after a successful approval', async () => {
-    const onRespond = vi.fn().mockResolvedValue(undefined)
-    const view = render(
-      <WorkspacePlanCard projection={projection} onOpen={vi.fn()} onRespond={onRespond} />
-    )
-
-    fireEvent.click(screen.getByRole('button', { name: 'Approve' }))
-
-    await waitFor(() => expect(onRespond).toHaveBeenCalledWith('approved'))
-    expect(view.container.querySelector('article')).toBeNull()
   })
 
   it('drops nested card chrome when embedded in the shared composer panel', () => {
-    const view = render(
-      <WorkspacePlanCard embedded projection={projection} onOpen={vi.fn()} onRespond={vi.fn()} />
-    )
+    const view = render(<WorkspacePlanCard embedded projection={projection} onOpen={vi.fn()} />)
 
     const card = view.container.querySelector('article')
     expect(card?.classList.contains('rounded-none')).toBe(true)
@@ -132,78 +116,51 @@ describe('Session Plan renderer surfaces', () => {
     expect(card?.classList.contains('shadow-none')).toBe(true)
   })
 
-  it('submits inline revision feedback as a user Message', async () => {
+  it('submits revision feedback only from the Preview', async () => {
     const onRespond = vi.fn().mockResolvedValue(undefined)
-    const onSubmitResponse = vi.fn().mockResolvedValue(undefined)
-    const view = render(
-      <WorkspacePlanCard
-        projection={projection}
-        onOpen={vi.fn()}
-        onRespond={onRespond}
-        onSubmitResponse={onSubmitResponse}
-      />
-    )
+    const view = render(<PlanPreviewSurface projection={projection} onRespond={onRespond} />)
 
     const input = view.container.querySelector('textarea')!
     fireEvent.change(input, { target: { value: 'Split the analysis by cohort.' } })
     fireEvent.submit(input.closest('form')!)
     await waitFor(() =>
-      expect(onSubmitResponse).toHaveBeenCalledWith('Split the analysis by cohort.')
+      expect(onRespond).toHaveBeenCalledWith({ feedback: 'Split the analysis by cohort.' })
     )
-    expect(view.container.querySelector('article')).toBeNull()
-    expect(onRespond).not.toHaveBeenCalled()
-    expect(screen.queryByRole('button', { name: /request changes/i })).toBeNull()
+    expect(screen.queryByLabelText('Respond to Plan')).toBeNull()
   })
 
   it.each(['looks good', 'dismiss', '批准执行', '取消计划', '先修改后再批准'])(
     'submits natural-language text %s as feedback without inferring a decision',
     async (text) => {
       const onRespond = vi.fn().mockResolvedValue(undefined)
-      const onSubmitResponse = vi.fn().mockResolvedValue(undefined)
-      const view = render(
-        <WorkspacePlanCard
-          projection={projection}
-          onOpen={vi.fn()}
-          onRespond={onRespond}
-          onSubmitResponse={onSubmitResponse}
-        />
-      )
+      const view = render(<PlanPreviewSurface projection={projection} onRespond={onRespond} />)
 
       const input = view.container.querySelector('textarea')!
       fireEvent.change(input, { target: { value: text } })
       fireEvent.submit(input.closest('form')!)
 
-      await waitFor(() => expect(onSubmitResponse).toHaveBeenCalledWith(text))
-      expect(onRespond).not.toHaveBeenCalled()
-      expect(view.container.querySelector('article')).toBeNull()
+      await waitFor(() => expect(onRespond).toHaveBeenCalledWith({ feedback: text }))
+      expect(screen.queryByLabelText('Respond to Plan')).toBeNull()
     }
   )
 
   it('keeps a replaced card readable with the exact stale warning and no approval entry points', () => {
-    render(
-      <WorkspacePlanCard
-        projection={projection}
-        stale
-        onOpen={vi.fn()}
-        onRespond={vi.fn()}
-        onSubmitResponse={vi.fn()}
-      />
-    )
+    render(<WorkspacePlanCard projection={projection} stale onOpen={vi.fn()} />)
 
     const warning = screen.getByText(
       /A newer plan is active\. This plan can no longer be approved\./u
     )
     expect(warning.className).toContain('bg-muted')
     expect(warning.className).not.toContain('amber')
-    expect(screen.getByRole('button', { name: 'Open' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'View plan' })).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull()
-    expect(screen.queryByRole('button', { name: 'Dismiss' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Discard' })).toBeNull()
     expect(screen.queryByLabelText('Respond to Plan')).toBeNull()
   })
 
-  it('offers Download, Dismiss, and Approve in active Preview and makes replaced Preview read-only', () => {
+  it('offers Download, Discard, Approve, and feedback in active Preview only', () => {
     const onDownload = vi.fn()
-    const onRespond = vi.fn()
+    const onRespond = vi.fn().mockResolvedValue(undefined)
     const { rerender } = render(
       <PlanPreviewSurface projection={projection} onDownload={onDownload} onRespond={onRespond} />
     )
@@ -211,7 +168,7 @@ describe('Session Plan renderer surfaces', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Approve' }))
     expect(onDownload).toHaveBeenCalledOnce()
     expect(onRespond).toHaveBeenCalledOnce()
-    expect(onRespond).toHaveBeenCalledWith('approved')
+    expect(onRespond).toHaveBeenCalledWith({ decision: 'approved' })
 
     rerender(
       <PlanPreviewSurface
@@ -226,31 +183,32 @@ describe('Session Plan renderer surfaces', () => {
     ).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Download Plan' })).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull()
-    expect(screen.queryByRole('button', { name: 'Dismiss' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Discard' })).toBeNull()
+    expect(screen.queryByLabelText('Respond to Plan')).toBeNull()
   })
 
   it('submits only the first Preview decision while its response is pending', () => {
     const onRespond = vi.fn(() => new Promise<void>(() => undefined))
     render(<PlanPreviewSurface projection={projection} onRespond={onRespond} />)
 
-    const dismiss = screen.getByRole('button', { name: 'Dismiss' }) as HTMLButtonElement
+    const discard = screen.getByRole('button', { name: 'Discard' }) as HTMLButtonElement
     const approve = screen.getByRole('button', { name: 'Approve' }) as HTMLButtonElement
-    fireEvent.click(dismiss)
+    fireEvent.click(discard)
 
-    expect(dismiss.disabled).toBe(true)
+    expect(discard.disabled).toBe(true)
     expect(approve.disabled).toBe(true)
-    expect(dismiss.closest('[aria-busy="true"]')).not.toBeNull()
+    expect(discard.closest('[aria-busy="true"]')).not.toBeNull()
     fireEvent.click(approve)
 
     expect(onRespond).toHaveBeenCalledOnce()
-    expect(onRespond).toHaveBeenCalledWith('rejected')
+    expect(onRespond).toHaveBeenCalledWith({ decision: 'rejected' })
   })
 
   it('explains why a pending Preview without a live response handler is read-only', () => {
     render(<PlanPreviewSurface projection={projection} />)
 
     expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull()
-    expect(screen.queryByRole('button', { name: 'Dismiss' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Discard' })).toBeNull()
     expect(screen.getByText(/original Agent interaction has ended/u)).toBeTruthy()
   })
 
@@ -293,11 +251,11 @@ describe('Session Plan renderer surfaces', () => {
     expect(screen.getByRole('button', { name: 'Download Plan' }).textContent).toContain('Download')
     expect(document.querySelector('header')?.className).toContain('h-9')
     fireEvent.click(screen.getByRole('button', { name: 'Download Plan' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Discard' }))
     fireEvent.click(screen.getByRole('button', { name: 'Enter full screen' }))
     expect(onDownload).toHaveBeenCalledOnce()
     expect(onRespond).toHaveBeenCalledOnce()
-    expect(onRespond).toHaveBeenCalledWith('rejected')
+    expect(onRespond).toHaveBeenCalledWith({ decision: 'rejected' })
     expect(onToggleFullScreen).toHaveBeenCalledOnce()
   })
 
@@ -453,7 +411,6 @@ describe('Session Plan renderer surfaces', () => {
           stepStates: { 'Analyze the data': { status: 'in_progress' } }
         }}
         onOpen={vi.fn()}
-        onRespond={vi.fn()}
       />
     )
     expect(screen.getByText('Plan in progress')).toBeTruthy()
@@ -463,7 +420,6 @@ describe('Session Plan renderer surfaces', () => {
       <WorkspacePlanCard
         projection={{ ...multiLevelProjection, approval: 'approved', lifecycle: 'blocked' }}
         onOpen={vi.fn()}
-        onRespond={vi.fn()}
       />
     )
     expect(screen.getByText('Plan blocked')).toBeTruthy()
@@ -478,7 +434,6 @@ describe('Session Plan renderer surfaces', () => {
           counts: { ...projection.counts, completed: 1 }
         }}
         onOpen={vi.fn()}
-        onRespond={vi.fn()}
       />
     )
     expect(screen.getByText('Plan completed')).toBeTruthy()
@@ -572,13 +527,7 @@ describe('Session Plan renderer surfaces', () => {
         'Analyze the data': { status: 'in_progress' as const, updatedAt: 42 }
       }
     }
-    const { rerender } = render(
-      <WorkspacePlanCard
-        projection={restored}
-        onOpen={vi.fn()}
-        onRespond={vi.fn().mockResolvedValue(undefined)}
-      />
-    )
+    const { rerender } = render(<WorkspacePlanCard projection={restored} onOpen={vi.fn()} />)
     expect(screen.getByText('Plan interrupted')).toBeTruthy()
     expect(screen.queryByText(/Send a message to continue/u)).toBeNull()
 

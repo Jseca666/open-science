@@ -1270,6 +1270,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     const session = createSession({
       activities: [createActivity({ id: 'tool-ask-1', elicitation: projection })]
     })
+    const onActivatePendingElicitation = vi.fn()
 
     root = createRoot(container)
     await act(async () => {
@@ -1286,6 +1287,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
               fields: projection.fields
             }
           ]}
+          onActivatePendingElicitation={onActivatePendingElicitation}
         />
       )
     })
@@ -1297,6 +1299,16 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
       container.querySelector('[data-testid="elicitation-pending-placeholder"]')
     ).not.toBeNull()
     expect(container.querySelector('[data-testid="elicitation-option-minimal"]')).toBeNull()
+    expect(
+      container.querySelectorAll('[data-testid="elicitation-card"] button[type="submit"]')
+    ).toHaveLength(0)
+
+    await act(async () => {
+      container
+        .querySelector<HTMLButtonElement>('[data-testid="elicitation-pending-placeholder"]')
+        ?.click()
+    })
+    expect(onActivatePendingElicitation).toHaveBeenCalledOnce()
   })
 
   it('rehydrates a durable answered question as a read-only message review', async () => {

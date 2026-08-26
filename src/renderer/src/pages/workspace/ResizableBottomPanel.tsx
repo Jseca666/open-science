@@ -129,6 +129,7 @@ const ResizableBottomPanel = ({
       <button
         type="button"
         aria-label={ariaLabel}
+        data-resize-handle="true"
         className={`group absolute top-0 z-20 grid cursor-ns-resize touch-none select-none place-items-center focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 ${
           variant === 'integrated'
             ? 'left-1/2 h-8 w-24 -translate-x-1/2 -translate-y-1/2 rounded-full bg-gradient-to-b from-bg-10/0 to-bg-000/95 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-28'

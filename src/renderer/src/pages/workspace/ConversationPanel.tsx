@@ -47,7 +47,7 @@ import {
   Square,
   X
 } from 'lucide-react'
-import { useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { resolveEffectiveSpecialistSkills } from '../../../../shared/specialist'
 import { isUnsupportedCodexAcpVersionError } from '../../../../shared/codex-runtime'
 
@@ -64,6 +64,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useFileDropZone } from '@/hooks/useFileDropZone'
+import { useMediaQuery } from '@/hooks/useMediaQuery'
 import { cn } from '@/lib/utils'
 import {
   projectSessionActionability,
@@ -104,7 +105,6 @@ import { PlanProgressChip, WorkspacePlanCard } from './session-plan/SessionPlanS
 import { projectDelegatedQuestionQueue } from './subagent-release-projection'
 import { selectActiveBranchPlan } from './session-plan/active-branch-plan'
 import { isPlanProgressVisible } from './session-plan/plan-progress'
-import { respondToSessionPlan } from './session-plan/respond-to-session-plan'
 import {
   createSessionPlanPreviewItem,
   usePreviewWorkbenchStore
@@ -167,6 +167,8 @@ const composerCancelButtonClassName = cn(
   composerInteractiveTransitionClassName
 )
 const composerContentClassName = 'mx-auto w-full max-w-4xl'
+const blockingFocusSelector =
+  '[data-blocking-primary-focus="true"], button:not([disabled]):not([data-resize-handle="true"]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [role="textbox"]:not([aria-disabled="true"]), [tabindex]:not([tabindex="-1"])'
 const attachmentChipClassName =
   'flex h-9 min-w-0 max-w-[220px] items-center gap-2 rounded-lg border border-border-200 bg-bg-200 px-2 text-text-000'
 const attachmentRemoveButtonClassName = cn(
@@ -408,7 +410,7 @@ const ConversationPanel = ({
       branch: canBranchInNewSession
     },
     actions: {
-      submit: { draft: submitDraft, restoredPlan: onRespondToRestoredPlan },
+      submit: { draft: submitDraft },
       revise: onSendEditedMessage,
       branch: onBranchFromAgentMessage,
       sideChat: { start: onStartSideChat },
@@ -513,6 +515,9 @@ const ConversationPanel = ({
   const [messageQueueExpanded, setMessageQueueExpanded] = useState(false)
   const setElicitationDraftAnswers = useSessionStore((state) => state.setElicitationDraftAnswers)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const blockingComposerRef = useRef<HTMLDivElement | null>(null)
+  const handledPendingPlanKeysRef = useRef(new Set<string>())
+  const isMobile = useMediaQuery('(max-width: 767px)')
   const globalSearchShortcut = window.api?.platform === 'darwin' ? '⌘K' : 'Ctrl+K'
   // Local so the interrupted banner can show a spinner and block a double-resume until the request settles.
   const [resumingSessionId, setResumingSessionId] = useState<string>()
@@ -595,11 +600,8 @@ const ConversationPanel = ({
   const activePendingPlanKey = activePendingPlan
     ? `${activePendingPlan.artifactVersionId}:${activePendingPlan.revision}`
     : undefined
-  const [resolvedPlanKey, setResolvedPlanKey] = useState<string>()
   const pendingPlan =
-    activePendingPlanKey &&
-    resolvedPlanKey !== activePendingPlanKey &&
-    activeSession?.status === 'waiting-plan-approval'
+    activePendingPlanKey && activeSession?.status === 'waiting-plan-approval'
       ? activePendingPlan
       : undefined
   const resolvedRunError =
@@ -698,12 +700,7 @@ const ConversationPanel = ({
     ? projectSessionActionability(activeSession, {
         rootPermissionPending,
         elicitationPending: pendingElicitation ? true : undefined,
-        planPending:
-          pendingPlan !== undefined
-            ? true
-            : activePendingPlanKey && resolvedPlanKey === activePendingPlanKey
-              ? false
-              : undefined
+        planPending: pendingPlan !== undefined ? true : undefined
       })
     : undefined
   const blockingInteraction =
@@ -724,6 +721,15 @@ const ConversationPanel = ({
     activeSession?.compacting ||
     activeSession?.fixLoopActive
   )
+  const blockingInteractionKey = sideChat
+    ? undefined
+    : hasPendingPermission
+      ? `permission:${rootPermissionRequests[0]?.requestId ?? 'pending'}`
+      : pendingElicitation
+        ? `elicitation:${pendingElicitationRequest?.requestId ?? pendingElicitationActivity?.id ?? 'pending'}`
+        : pendingPlan
+          ? `plan:${activeSession?.id ?? 'session'}:${activePendingPlanKey}`
+          : undefined
 
   // Re-attaches the interrupted session; on success the banner unmounts, so guard the state update.
   const handleResume = async (): Promise<void> => {
@@ -762,24 +768,6 @@ const ConversationPanel = ({
     onBranchInNewSession(docToSkillIds(draftDoc))
   }
 
-  const respondToPendingPlan = async (
-    response: { decision: 'approved' | 'rejected' } | { feedback: string }
-  ): Promise<void> => {
-    if (!activeSession || !pendingPlan) return
-    if (!activeSession.activeRun) {
-      await onRespondToRestoredPlan(response)
-      return
-    }
-    await respondToSessionPlan(
-      {
-        projectId: activeSession.projectId,
-        sessionId: activeSession.id,
-        projection: pendingPlan
-      },
-      response
-    )
-  }
-
   const openPendingPlan = (): void => {
     if (!activeSession || !pendingPlan) return
     usePreviewWorkbenchStore.getState().upsertAndActivateItem(
@@ -791,6 +779,55 @@ const ConversationPanel = ({
       )
     )
   }
+
+  const focusBlockingComposer = useCallback((): void => {
+    const surface = blockingComposerRef.current
+    if (!surface) return
+    const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
+    surface.scrollIntoView?.({ behavior: reducedMotion ? 'auto' : 'smooth', block: 'nearest' })
+    surface.querySelector<HTMLElement>(blockingFocusSelector)?.focus({ preventScroll: true })
+  }, [])
+
+  const previousBlockingInteractionKeyRef = useRef<string | undefined>(undefined)
+  useEffect(() => {
+    const previousKey = previousBlockingInteractionKeyRef.current
+    previousBlockingInteractionKeyRef.current = blockingInteractionKey
+
+    if (blockingInteractionKey) {
+      focusBlockingComposer()
+      return
+    }
+    if (previousKey) setComposerRestoreFocusRequest((request) => (request ?? 0) + 1)
+  }, [blockingInteractionKey, focusBlockingComposer])
+
+  // A new desktop Plan may claim an idle/collapsed preview once. If the user is already looking at
+  // another preview, register the Plan tab passively and leave their current work untouched.
+  useEffect(() => {
+    if (!activeSession || !pendingPlan || !activePendingPlanKey) return
+    const pendingKey = `${activeSession.id}:${activePendingPlanKey}`
+    if (handledPendingPlanKeysRef.current.has(pendingKey)) return
+    handledPendingPlanKeysRef.current.add(pendingKey)
+
+    const preview = usePreviewWorkbenchStore.getState()
+    const planItem = createSessionPlanPreviewItem(
+      activeSession.id,
+      activeSession.projectId,
+      pendingPlan.artifactVersionId
+    )
+    const activeItem = preview.items.find((item) => item.id === preview.activeItemId)
+    const otherPanelPreviewIsActive =
+      preview.panelState === 'open' && activeItem !== undefined && activeItem.id !== planItem.id
+    const otherOverlayPreviewIsActive = Boolean(
+      preview.fileDialogItem ||
+      (preview.expandedToolItemId && preview.expandedToolItemId !== planItem.id)
+    )
+
+    if (isMobile || otherPanelPreviewIsActive || otherOverlayPreviewIsActive) {
+      preview.upsertItem(planItem)
+      return
+    }
+    preview.upsertAndActivateItem(planItem)
+  }, [activePendingPlanKey, activeSession, isMobile, pendingPlan])
 
   const hasTextDraft = draftDoc.nodes.some(
     (node) => node.type === 'text' && node.text.trim().length > 0
@@ -945,6 +982,9 @@ const ConversationPanel = ({
               canBranchInNewSession={canBranchInNewSession}
               onBranchInNewSession={onBranchFromAgentMessage}
               pendingElicitations={sideChat ? [] : sessionPendingElicitations}
+              onActivatePendingElicitation={
+                blockingInteraction === 'elicitation' ? focusBlockingComposer : undefined
+              }
               handoffLifecycleSource={workspaceHandoffLifecycleClient}
               onRetryHandoff={(request) => workspaceHandoffLifecycleClient.retry(request)}
               reportPresentationRevealing
@@ -1244,6 +1284,7 @@ const ConversationPanel = ({
 
                   {ordinaryComposerBlocked ? (
                     <div
+                      ref={blockingComposerRef}
                       data-testid="blocking-composer-overlay"
                       className="absolute inset-x-0 bottom-0 z-30"
                     >
@@ -1324,9 +1365,6 @@ const ConversationPanel = ({
                             embedded
                             projection={pendingPlan}
                             onOpen={openPendingPlan}
-                            onRespond={(decision) => respondToPendingPlan({ decision })}
-                            onSubmitResponse={(text) => respondToPendingPlan({ feedback: text })}
-                            onResolved={() => setResolvedPlanKey(activePendingPlanKey)}
                           />
                         </ResizablePlanComposer>
                       ) : null}

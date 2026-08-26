@@ -19,7 +19,11 @@ import { ProjectFilesView } from '../ProjectFilesView'
 import { SessionReviewerPanel } from '../SessionReviewerPanel'
 import { SubagentPreview } from '../SubagentReleaseSurfaces'
 import { respondToSessionPlan } from '../session-plan/respond-to-session-plan'
-import { PlanPreviewSurface, type RestoredPlanResponder } from '../session-plan/SessionPlanSurfaces'
+import {
+  PlanPreviewSurface,
+  type PlanResponse,
+  type RestoredPlanResponder
+} from '../session-plan/SessionPlanSurfaces'
 import { useIsSideChatOpenForSession } from '../use-side-chat-controller'
 
 const isNotebookPreviewItem = (item: PreviewToolItem): item is NotebookPreviewItem =>
@@ -174,17 +178,17 @@ const PlanPreviewToolContent = ({
   const planProjection = resolvePlanProjection(planSession, item.planArtifactVersionId)
   const runtimePlan = planSession?.runtimeContext?.plan
 
-  const respondPlan = async (decision: 'approved' | 'rejected'): Promise<void> => {
+  const respondPlan = async (response: PlanResponse): Promise<void> => {
     if (!planProjection || !item.projectId) return
     if (planSession?.activeRun) {
       await respondToSessionPlan(
         { projectId: item.projectId, sessionId: item.sessionId, projection: planProjection },
-        { decision }
+        response
       )
       return
     }
     if (restoredPlanResponder?.sessionId !== item.sessionId) return
-    await restoredPlanResponder.respond({ decision })
+    await restoredPlanResponder.respond(response)
   }
   const hasPlanResponsePath =
     planSession?.activeRun !== undefined || restoredPlanResponder?.sessionId === item.sessionId
