@@ -47,6 +47,7 @@ type PreviewPanelProps = {
 
 type PreviewPanelSurfaceProps = {
   className?: string
+  contentClassName?: string
   hidden?: boolean
   restoredPlanResponder?: RestoredPlanResponder
 }
@@ -460,10 +461,12 @@ const usePreviewModalSurface = ({
 const PreviewFilePanel = ({
   item,
   contentKey,
+  contentClassName,
   onClose
 }: {
   item: PreviewFileItem
   contentKey: string
+  contentClassName?: string
   onClose: (id: string) => void
 }): React.JSX.Element => {
   const { t } = useTranslation()
@@ -511,7 +514,8 @@ const PreviewFilePanel = ({
                 'z-[61] flex h-[90vh] w-[90vw] max-w-none min-h-0 flex-col overflow-hidden overscroll-contain p-0'
               )
             : cn(
-                'flex h-full min-h-0 w-full flex-col overflow-hidden rounded-md bg-bg-000 shadow-card'
+                'flex h-full min-h-0 w-full flex-col overflow-hidden rounded-md bg-bg-000 shadow-card',
+                contentClassName
               )
         }
       >
@@ -543,10 +547,12 @@ const PreviewFilePanel = ({
 const PreviewToolPanel = ({
   item,
   isActive,
+  contentClassName,
   restoredPlanResponder
 }: {
   item: PreviewToolItem
   isActive: boolean
+  contentClassName?: string
   restoredPlanResponder?: RestoredPlanResponder
 }): React.JSX.Element => {
   const isExpanded = usePreviewWorkbenchStore(
@@ -591,7 +597,7 @@ const PreviewToolPanel = ({
             ? dialogPanelClassName(
                 'z-[56] flex h-[90vh] w-[90vw] max-w-none min-h-0 flex-col overflow-hidden overscroll-contain p-0'
               )
-            : 'h-full min-h-0 w-full overflow-y-auto'
+            : cn('h-full min-h-0 w-full overflow-y-auto', contentClassName)
         }
       >
         <PreviewActiveContent item={item} restoredPlanResponder={restoredPlanResponder} />
@@ -603,10 +609,12 @@ const PreviewToolPanel = ({
 const PreviewSourcePanel = ({
   item,
   isActive,
+  contentClassName,
   onClose
 }: {
   item: PreviewSourceItem
   isActive: boolean
+  contentClassName?: string
   onClose: (id: string) => void
 }): React.JSX.Element => (
   <section
@@ -615,7 +623,10 @@ const PreviewSourcePanel = ({
     aria-labelledby={getPreviewTabId(item.id)}
     tabIndex={0}
     hidden={!isActive}
-    className="flex h-full min-h-0 w-full flex-col overflow-hidden rounded-md bg-bg-000 shadow-card"
+    className={cn(
+      'flex h-full min-h-0 w-full flex-col overflow-hidden rounded-md bg-bg-000 shadow-card',
+      contentClassName
+    )}
   >
     <SourceWebPreview item={item} onClose={() => onClose(item.id)} />
   </section>
@@ -625,6 +636,7 @@ const PreviewSourcePanel = ({
 // tabs and active content inside a bottom sheet.
 const PreviewPanelSurface = ({
   className,
+  contentClassName,
   hidden = false,
   restoredPlanResponder
 }: PreviewPanelSurfaceProps): React.JSX.Element => {
@@ -701,7 +713,7 @@ const PreviewPanelSurface = ({
       {items.length > 0 ? (
         <div
           data-testid="preview-panel-top-bar"
-          className="flex min-w-0 w-full shrink-0 items-start pl-2 pr-14"
+          className={cn('flex min-w-0 w-full shrink-0 items-start pl-2 pr-14', contentClassName)}
         >
           <PreviewTabBar
             tabs={items}
@@ -719,11 +731,13 @@ const PreviewPanelSurface = ({
         )}
       >
         {!activeItem ? (
-          <PreviewActiveContent
-            key={activeContentKey}
-            item={activeItem}
-            restoredPlanResponder={restoredPlanResponder}
-          />
+          <div className={cn('size-full', contentClassName)}>
+            <PreviewActiveContent
+              key={activeContentKey}
+              item={activeItem}
+              restoredPlanResponder={restoredPlanResponder}
+            />
+          </div>
         ) : null}
         {items.map((item) => {
           const isActivePanel = item.id === activeItemId && !hidden
@@ -736,6 +750,7 @@ const PreviewPanelSurface = ({
                 key={item.id}
                 item={item}
                 isActive={isActivePanel}
+                contentClassName={contentClassName}
                 restoredPlanResponder={restoredPlanResponder}
               />
             )
@@ -749,6 +764,7 @@ const PreviewPanelSurface = ({
                 key={item.id}
                 item={item}
                 isActive={isActivePanel}
+                contentClassName={contentClassName}
                 onClose={removeItem}
               />
             )
@@ -759,6 +775,7 @@ const PreviewPanelSurface = ({
               key={item.id}
               item={item}
               contentKey={activeContentKey}
+              contentClassName={contentClassName}
               onClose={removeItem}
             />
           ) : (
@@ -816,7 +833,7 @@ const PreviewPanel = ({
       onResize={handleResize}
     >
       <PreviewPanelSurface
-        className={contentClassName}
+        contentClassName={contentClassName}
         hidden={contentHidden}
         restoredPlanResponder={restoredPlanResponder}
       />

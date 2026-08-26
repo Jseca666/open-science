@@ -130,7 +130,7 @@ describe('PreviewPanel', () => {
     container.remove()
   })
 
-  const renderPanel = async (strict = false): Promise<void> => {
+  const renderPanel = async (strict = false, contentClassName?: string): Promise<void> => {
     root = createRoot(container)
     await act(async () => {
       const panel = (
@@ -139,6 +139,7 @@ describe('PreviewPanel', () => {
           defaultSize="40%"
           minSize="30%"
           onResize={vi.fn()}
+          contentClassName={contentClassName}
         />
       )
       root.render(strict ? <StrictMode>{panel}</StrictMode> : panel)
@@ -651,8 +652,15 @@ describe('PreviewPanel', () => {
       })
     )
 
-    await renderPanel()
+    await renderPanel(false, 'test-panel-content-transition translate-x-2 opacity-0')
     const compactContent = container.querySelector('[data-testid="file-content"]')
+    const compactPanel = compactContent?.closest<HTMLElement>('[role="tabpanel"]')
+    const surface = container.querySelector<HTMLElement>('#right-panel')
+    const topBar = container.querySelector<HTMLElement>('[data-testid="preview-panel-top-bar"]')
+
+    expect(surface?.className).not.toContain('test-panel-content-transition')
+    expect(topBar?.className).toContain('test-panel-content-transition')
+    expect(compactPanel?.className).toContain('test-panel-content-transition')
 
     await act(async () => {
       container
@@ -674,6 +682,8 @@ describe('PreviewPanel', () => {
     expect(dialog?.className).toContain('bg-card')
     expect(dialog?.className).toContain('shadow-dialog')
     expect(dialog?.className).toContain('data-[state=open]:zoom-in-95')
+    expect(dialog?.className).not.toContain('test-panel-content-transition')
+    expect(dialog?.parentElement?.closest('.test-panel-content-transition')).toBeNull()
     expect(dialog?.querySelector('[data-testid="file-content"]')?.textContent).toContain(name)
     expect(dialog?.querySelector('[data-testid="file-content"]')).toBe(compactContent)
     expect(dialog?.querySelector(`[aria-label="Open full screen preview of ${name}"]`)).toBeNull()
