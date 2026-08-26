@@ -1,4 +1,3 @@
-import { animate } from 'motion'
 import { PanelLeft, PanelRight } from 'lucide-react'
 import { FocusScope } from '@radix-ui/react-focus-scope'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
@@ -26,19 +25,16 @@ const PREVIEW_PANEL_DEFAULT_SIZE_CSS = `${PREVIEW_PANEL_DEFAULT_SIZE}%`
 const PREVIEW_PANEL_MIN_OPEN_SIZE = 30
 const OPEN_DIALOG_SELECTOR =
   '[role="dialog"]:not([data-state="closed"]), [role="alertdialog"]:not([data-state="closed"])'
-
-const panelAnimation = {
-  duration: 0.22,
-  ease: [0.22, 1, 0.36, 1] as [number, number, number, number]
-}
+const PANEL_CONTENT_TRANSITION_MS = 150
+const PANEL_CONTENT_TRANSITION_CLASS_NAME =
+  'size-full min-w-0 transition-[opacity,transform] duration-150 ease-out motion-reduce:transition-none motion-reduce:transform-none'
 
 const prefersReducedMotion = (): boolean =>
   window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true
 
 type ResizablePanelState = 'open' | 'collapsed'
-type PanelAnimationDirection = 'opening' | 'closing'
 
-type AnimatedResizablePanelOptions = {
+type TransitionedResizablePanelOptions = {
   panelState: ResizablePanelState
   defaultOpenSize: number
   minOpenSize: number
@@ -48,15 +44,15 @@ type AnimatedResizablePanelOptions = {
   collapseFocusTargetRef: React.RefObject<HTMLButtonElement | null>
 }
 
-type AnimatedResizablePanel = {
+type TransitionedResizablePanel = {
   panelRef: React.RefObject<PanelImperativeHandle | null>
   separatorRef: React.RefObject<HTMLDivElement | null>
   minSize: string
   onResize: (panelSize: PanelSize, previousPanelSize: PanelSize | undefined) => void
 }
 
-// Owns the imperative animation lifecycle shared by the two workspace side panels.
-const useAnimatedResizablePanel = ({
+// Owns the one-shot resize and content-transition lifecycle shared by the desktop side panels.
+const useTransitionedResizablePanel = ({
   panelState,
   defaultOpenSize,
   minOpenSize,
@@ -64,118 +60,57 @@ const useAnimatedResizablePanel = ({
   onPanelStateChange,
   onPixelWidthChange,
   collapseFocusTargetRef
-}: AnimatedResizablePanelOptions): AnimatedResizablePanel => {
+}: TransitionedResizablePanelOptions): TransitionedResizablePanel => {
   const panelRef = useRef<PanelImperativeHandle | null>(null)
   const separatorRef = useRef<HTMLDivElement | null>(null)
-  const animationRef = useRef<{ stop: () => void } | null>(null)
-  const animationFrameRef = useRef<number | null>(null)
-  const animationDirectionRef = useRef<PanelAnimationDirection | null>(null)
+  const collapseTimerRef = useRef<number | null>(null)
+  const resizeFrameRef = useRef<number | null>(null)
+  const transitionTargetRef = useRef<ResizablePanelState | null>(null)
   const lastOpenSizeRef = useRef(defaultOpenSize)
   const hasSyncedInitialSizeRef = useRef(false)
-  const [isMinSizeRelaxed, setIsMinSizeRelaxed] = useState(false)
 
-  const animatePanelSize = useCallback(
-    (
-      targetSize: number,
-      direction: PanelAnimationDirection,
-      options?: { animate?: boolean }
-    ): void => {
-      const panel = panelRef.current
-      if (!panel) return
+  const resizePanel = useCallback((targetSize: number): void => {
+    const panel = panelRef.current
+    if (!panel) return
 
-      animationRef.current?.stop()
-      if (animationFrameRef.current !== null) {
-        window.cancelAnimationFrame(animationFrameRef.current)
-        animationFrameRef.current = null
-      }
+    try {
+      panel.resize(`${targetSize}%`)
+    } catch {
+      // react-resizable-panels can expose the handle before its layout is registered.
+      resizeFrameRef.current = window.requestAnimationFrame(() => {
+        resizeFrameRef.current = null
+        const nextPanel = panelRef.current
+        if (nextPanel !== panel) return
 
-      const resizePanel = (size: number): boolean => {
-        const currentPanel = panelRef.current
-
-        // Ignore motion callbacks that outlive the panel handle they were created for.
-        if (currentPanel !== panel) return false
-
-        currentPanel.resize(`${Number(size.toFixed(3))}%`)
-        return true
-      }
-
-      const startFromSize = (currentSize: number): void => {
-        if (
-          options?.animate === false ||
-          Math.abs(currentSize - targetSize) <= PANEL_COLLAPSED_THRESHOLD ||
-          prefersReducedMotion()
-        ) {
-          resizePanel(targetSize)
-          if (direction === 'opening') lastOpenSizeRef.current = targetSize
-          animationDirectionRef.current = null
-          animationRef.current = null
-          setIsMinSizeRelaxed(false)
-          return
+        try {
+          nextPanel.resize(`${targetSize}%`)
+        } catch {
+          // A detached panel will be synchronized by the next state/layout pass.
         }
-
-        animationDirectionRef.current = direction
-        setIsMinSizeRelaxed(true)
-        animationFrameRef.current = window.requestAnimationFrame(() => {
-          animationFrameRef.current = null
-          const nextPanel = panelRef.current
-          if (!nextPanel) return
-
-          const nextCurrentSize = nextPanel.getSize().asPercentage
-          animationRef.current = animate(nextCurrentSize, targetSize, {
-            ...panelAnimation,
-            onUpdate: resizePanel,
-            onComplete: () => {
-              const didResize = resizePanel(targetSize)
-              if (didResize && direction === 'opening') lastOpenSizeRef.current = targetSize
-              animationDirectionRef.current = null
-              animationRef.current = null
-              setIsMinSizeRelaxed(false)
-            }
-          })
-        })
-      }
-
-      try {
-        startFromSize(panel.getSize().asPercentage)
-      } catch {
-        // react-resizable-panels can expose the handle before its layout is registered.
-        animationFrameRef.current = window.requestAnimationFrame(() => {
-          animationFrameRef.current = null
-          const nextPanel = panelRef.current
-          if (nextPanel !== panel) return
-
-          try {
-            startFromSize(nextPanel.getSize().asPercentage)
-          } catch {
-            // A detached panel will be synchronized by the next state/layout pass.
-          }
-        })
-      }
-    },
-    []
-  )
+      })
+    }
+  }, [])
 
   const onResize = useCallback(
     (panelSize: PanelSize, previousPanelSize: PanelSize | undefined): void => {
       onPixelWidthChange?.(panelSize.inPixels)
 
       const isNearCollapsedSize = panelSize.asPercentage <= PANEL_COLLAPSED_THRESHOLD
-      const animationDirection = animationDirectionRef.current
-      const isOpeningAnimationResize =
-        animationDirection === 'opening' &&
+      const transitionTarget = transitionTargetRef.current
+      const isOpeningTransitionResize =
+        transitionTarget === 'open' &&
         (previousPanelSize === undefined ||
           panelSize.asPercentage >= previousPanelSize.asPercentage)
-      const isClosingAnimationResize =
-        animationDirection === 'closing' &&
+      const isClosingTransitionResize =
+        transitionTarget === 'collapsed' &&
         (previousPanelSize === undefined ||
           panelSize.asPercentage <= previousPanelSize.asPercentage)
 
-      if (isNearCollapsedSize && isOpeningAnimationResize) return
-      if (!isNearCollapsedSize && isClosingAnimationResize) return
+      if (isNearCollapsedSize && isOpeningTransitionResize) return
+      if (!isNearCollapsedSize && isClosingTransitionResize) return
 
-      if (!isNearCollapsedSize && animationDirection === null) {
-        lastOpenSizeRef.current = panelSize.asPercentage
-      }
+      transitionTargetRef.current = null
+      if (!isNearCollapsedSize) lastOpenSizeRef.current = panelSize.asPercentage
 
       if (isNearCollapsedSize && document.activeElement === separatorRef.current) {
         collapseFocusTargetRef.current?.focus()
@@ -186,35 +121,43 @@ const useAnimatedResizablePanel = ({
     [collapseFocusTargetRef, onPanelStateChange, onPixelWidthChange]
   )
 
-  // Synchronize restored state on first layout without introducing an entrance animation.
+  // Open layout is interactive immediately. Closing keeps layout stable only long enough for the
+  // content fade, then collapses with one resize. A new request cancels the pending collapse.
   useLayoutEffect(() => {
-    const shouldAnimate = hasSyncedInitialSizeRef.current
+    if (collapseTimerRef.current !== null) window.clearTimeout(collapseTimerRef.current)
+    if (resizeFrameRef.current !== null) window.cancelAnimationFrame(resizeFrameRef.current)
+    collapseTimerRef.current = null
+    resizeFrameRef.current = null
+    transitionTargetRef.current = panelState
+
+    const hasSyncedInitialSize = hasSyncedInitialSizeRef.current
     hasSyncedInitialSizeRef.current = true
 
     if (panelState === 'collapsed') {
-      animatePanelSize(PANEL_COLLAPSED_SIZE, 'closing', { animate: shouldAnimate })
-      return
+      const collapse = (): void => {
+        collapseTimerRef.current = null
+        resizePanel(PANEL_COLLAPSED_SIZE)
+      }
+
+      if (hasSyncedInitialSize && !prefersReducedMotion()) {
+        collapseTimerRef.current = window.setTimeout(collapse, PANEL_CONTENT_TRANSITION_MS)
+      } else {
+        collapse()
+      }
+    } else {
+      resizePanel(Math.max(lastOpenSizeRef.current, minOpenSize))
     }
 
-    animatePanelSize(Math.max(lastOpenSizeRef.current, minOpenSize), 'opening', {
-      animate: shouldAnimate
-    })
-  }, [animatePanelSize, minOpenSize, panelState, requestVersion])
-
-  useEffect(
-    () => () => {
-      animationRef.current?.stop()
-      if (animationFrameRef.current !== null) {
-        window.cancelAnimationFrame(animationFrameRef.current)
-      }
-    },
-    []
-  )
+    return () => {
+      if (collapseTimerRef.current !== null) window.clearTimeout(collapseTimerRef.current)
+      if (resizeFrameRef.current !== null) window.cancelAnimationFrame(resizeFrameRef.current)
+    }
+  }, [minOpenSize, panelState, requestVersion, resizePanel])
 
   return {
     panelRef,
     separatorRef,
-    minSize: isMinSizeRelaxed ? PANEL_COLLAPSED_SIZE_CSS : `${minOpenSize}%`,
+    minSize: panelState === 'collapsed' ? PANEL_COLLAPSED_SIZE_CSS : `${minOpenSize}%`,
     onResize
   }
 }
@@ -226,7 +169,7 @@ type WorkspacePanelLayout = {
     open: () => void
     close: () => void
   }
-  sidebar: AnimatedResizablePanel & {
+  sidebar: TransitionedResizablePanel & {
     state: ResizablePanelState
     defaultSize: string
     toggle: () => void
@@ -235,7 +178,7 @@ type WorkspacePanelLayout = {
     toggleRef: React.RefObject<HTMLButtonElement | null>
     toggleButton: React.ReactNode
   }
-  preview: AnimatedResizablePanel & {
+  preview: TransitionedResizablePanel & {
     state: ResizablePanelState
     defaultSize: string
     toggle: () => void
@@ -296,7 +239,7 @@ const useWorkspacePanelLayout = (
     if (toggle) toggle.style.left = `${Math.max(0, panelWidth - SIDEBAR_TOGGLE_RIGHT_INSET)}px`
   }, [])
 
-  const sidebar = useAnimatedResizablePanel({
+  const sidebar = useTransitionedResizablePanel({
     panelState: sidebarState,
     defaultOpenSize: SIDEBAR_PANEL_DEFAULT_SIZE,
     minOpenSize: SIDEBAR_PANEL_MIN_OPEN_SIZE,
@@ -308,7 +251,7 @@ const useWorkspacePanelLayout = (
   const [initialPreviewDefaultSize] = useState(() =>
     previewPort.state === 'collapsed' ? PANEL_COLLAPSED_SIZE_CSS : PREVIEW_PANEL_DEFAULT_SIZE_CSS
   )
-  const preview = useAnimatedResizablePanel({
+  const preview = useTransitionedResizablePanel({
     panelState: previewPort.state,
     defaultOpenSize: PREVIEW_PANEL_DEFAULT_SIZE,
     minOpenSize: PREVIEW_PANEL_MIN_OPEN_SIZE,
@@ -583,10 +526,21 @@ const WorkspacePanelLayout = ({
                   sidebar.onResize(panelSize, previousPanelSize)
                 }
               >
-                {renderDesktopSidebar({
-                  sidebarToggle: { state: sidebar.state, onToggle: sidebar.toggle },
-                  sidebarToggleRef: sidebar.toggleRef
-                })}
+                <div
+                  data-testid="workspace-sidebar-content"
+                  aria-hidden={sidebar.state === 'collapsed' ? true : undefined}
+                  inert={sidebar.state === 'collapsed' ? true : undefined}
+                  className={`${PANEL_CONTENT_TRANSITION_CLASS_NAME} ${
+                    sidebar.state === 'collapsed'
+                      ? 'pointer-events-none -translate-x-2 opacity-0'
+                      : 'translate-x-0 opacity-100'
+                  }`}
+                >
+                  {renderDesktopSidebar({
+                    sidebarToggle: { state: sidebar.state, onToggle: sidebar.toggle },
+                    sidebarToggleRef: sidebar.toggleRef
+                  })}
+                </div>
               </ResizablePanel>
 
               <ResizableHandle
@@ -594,7 +548,7 @@ const WorkspacePanelLayout = ({
                 aria-label={t('Resize left panel')}
                 disabled={sidebar.state === 'collapsed'}
                 aria-hidden={sidebar.state === 'collapsed'}
-                className={`before:left-auto before:right-full before:mr-[3px] before:translate-x-0 transition-opacity duration-200 ease-out ${
+                className={`before:left-auto before:right-full before:mr-[3px] before:translate-x-0 transition-opacity duration-150 ease-out ${
                   sidebar.state === 'collapsed' ? 'opacity-0' : 'opacity-100'
                 }`}
               />
@@ -614,7 +568,7 @@ const WorkspacePanelLayout = ({
                 aria-label={t('Resize right panel')}
                 disabled={preview.state === 'collapsed'}
                 aria-hidden={preview.state === 'collapsed'}
-                className={`bg-border shadow-[1px_0_3px_rgba(30,28,24,0.08)] before:left-auto before:right-full before:mr-0.5 before:w-1 before:translate-x-0 transition-opacity duration-200 ease-out ${
+                className={`bg-border shadow-[1px_0_3px_rgba(30,28,24,0.08)] before:left-auto before:right-full before:mr-0.5 before:w-1 before:translate-x-0 transition-opacity duration-150 ease-out ${
                   preview.state === 'collapsed' ? 'opacity-0' : 'opacity-100'
                 }`}
               />
@@ -624,6 +578,12 @@ const WorkspacePanelLayout = ({
                 defaultSize={preview.defaultSize}
                 minSize={preview.minSize}
                 onResize={preview.onResize}
+                contentClassName={`${PANEL_CONTENT_TRANSITION_CLASS_NAME} ${
+                  preview.state === 'collapsed'
+                    ? 'pointer-events-none translate-x-2 opacity-0'
+                    : 'translate-x-0 opacity-100'
+                }`}
+                contentHidden={preview.state === 'collapsed'}
                 restoredPlanResponder={restoredPlanResponder}
               />
             </>

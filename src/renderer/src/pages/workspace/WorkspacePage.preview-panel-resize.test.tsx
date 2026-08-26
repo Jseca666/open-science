@@ -46,6 +46,8 @@ const workspacePageHarness = vi.hoisted(() => ({
   previewSize: 0,
   previewPanelDefaultSize: undefined as string | undefined,
   previewPanelMinSize: undefined as string | undefined,
+  previewContentClassName: undefined as string | undefined,
+  previewContentHidden: undefined as boolean | undefined,
   previewOnResize: undefined as
     undefined | ((panelSize: PanelSize, previousPanelSize: PanelSize | undefined) => void),
   previewPanelRef: undefined as undefined | { current: PanelImperativeHandle | null },
@@ -63,27 +65,8 @@ const workspacePageHarness = vi.hoisted(() => ({
   } as PanelImperativeHandle
 }))
 
-const motionHarness = vi.hoisted(() => ({
-  animate: vi.fn(
-    (
-      from: number,
-      to: number,
-      options: { onUpdate?: (value: number) => void; onComplete?: () => void }
-    ) => ({
-      from,
-      to,
-      options,
-      stop: vi.fn()
-    })
-  )
-}))
-
 const filePreviewDialogHarness = vi.hoisted(() => ({
   item: undefined as PreviewFileItem | undefined
-}))
-
-vi.mock('motion', () => ({
-  animate: motionHarness.animate
 }))
 
 vi.mock('@/components/ui/resizable', () => ({
@@ -243,16 +226,22 @@ vi.mock('./PreviewPanel', () => ({
     panelRef,
     defaultSize,
     minSize,
-    onResize
+    onResize,
+    contentClassName,
+    contentHidden
   }: {
     panelRef: React.Ref<PanelImperativeHandle>
     defaultSize: string
     minSize: string
     onResize: (panelSize: PanelSize, previousPanelSize: PanelSize | undefined) => void
+    contentClassName?: string
+    contentHidden?: boolean
   }): React.JSX.Element => {
     workspacePageHarness.previewPanelDefaultSize = defaultSize
     workspacePageHarness.previewPanelMinSize = minSize
     workspacePageHarness.previewOnResize = onResize
+    workspacePageHarness.previewContentClassName = contentClassName
+    workspacePageHarness.previewContentHidden = contentHidden
 
     if (typeof panelRef === 'function') {
       panelRef(workspacePageHarness.previewPanelHandle)
@@ -263,7 +252,13 @@ vi.mock('./PreviewPanel', () => ({
       workspacePageHarness.previewPanelRef.current = workspacePageHarness.previewPanelHandle
     }
 
-    return <div data-testid="preview-panel" />
+    return (
+      <div
+        data-testid="preview-panel"
+        aria-hidden={contentHidden ? true : undefined}
+        className={contentClassName}
+      />
+    )
   }
 }))
 
@@ -295,16 +290,27 @@ describe('WorkspacePage preview panel resize sync', () => {
     workspacePageHarness.isMobile = false
     workspacePageHarness.previewPanelDefaultSize = undefined
     workspacePageHarness.previewPanelMinSize = undefined
+    workspacePageHarness.previewContentClassName = undefined
+    workspacePageHarness.previewContentHidden = undefined
     workspacePageHarness.previewOnResize = undefined
     workspacePageHarness.previewPanelRef = undefined
+    workspacePageHarness.previewPanelHandle.resize = vi.fn((size: number | string) => {
+      workspacePageHarness.previewSize = Number.parseFloat(String(size))
+    })
     filePreviewDialogHarness.item = undefined
     notebookAvailableListener = undefined
     vi.clearAllMocks()
-    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
-      callback(0)
-      return 1
-    })
-    vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => undefined)
+    vi.stubGlobal(
+      'requestAnimationFrame',
+      vi.fn((callback: FrameRequestCallback) => {
+        callback(0)
+        return 1
+      })
+    )
+    vi.stubGlobal(
+      'cancelAnimationFrame',
+      vi.fn(() => undefined)
+    )
     window.matchMedia = vi.fn((query: string) => ({
       matches: query === '(max-width: 767px)' ? workspacePageHarness.isMobile : false,
       media: query,
@@ -343,6 +349,7 @@ describe('WorkspacePage preview panel resize sync', () => {
     })
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
+    vi.useRealTimers()
     container.remove()
   })
 
@@ -558,8 +565,10 @@ describe('WorkspacePage preview panel resize sync', () => {
     expect(leftHandle?.className).toContain('before:left-auto')
   })
 
-  it('animates the sidebar to zero and restores its last open size', async () => {
+  it('fades the sidebar content before one-shot collapse and restores its last open size', async () => {
+    vi.useFakeTimers()
     await renderPage()
+    vi.mocked(workspacePageHarness.sidebarPanelHandle.resize).mockClear()
 
     await act(async () => {
       getSidebarToggle().dispatchEvent(new MouseEvent('click', { bubbles: true }))
@@ -569,18 +578,13 @@ describe('WorkspacePage preview panel resize sync', () => {
     const toggleButton = getSidebarToggle()
     expect(toggleButton.getAttribute('aria-expanded')).toBe('false')
     expect(toggleButton.style.left).toBe('calc(16% - 38px)')
-    expect(motionHarness.animate).toHaveBeenCalledWith(
-      16,
-      0,
-      expect.objectContaining({
-        duration: 0.22,
-        ease: [0.22, 1, 0.36, 1],
-        onUpdate: expect.any(Function)
-      })
-    )
+    const content = container.querySelector('[data-testid="workspace-sidebar-content"]')
+    expect(content?.className).toContain('-translate-x-2')
+    expect(content?.className).toContain('opacity-0')
+    expect(content?.className).toContain('duration-150')
+    expect(content?.hasAttribute('inert')).toBe(true)
+    expect(workspacePageHarness.sidebarPanelHandle.resize).not.toHaveBeenCalled()
 
-    const closeAnimationOptions = motionHarness.animate.mock.calls.at(-1)?.[2] as
-      { onComplete?: () => void } | undefined
     await act(async () => {
       workspacePageHarness.sidebarOnResize?.({ asPercentage: 8, inPixels: 80 }, 'left-panel', {
         asPercentage: 16,
@@ -598,7 +602,7 @@ describe('WorkspacePage preview panel resize sync', () => {
     expect(toggleButton.style.left).toBe('0px')
 
     await act(async () => {
-      closeAnimationOptions?.onComplete?.()
+      vi.advanceTimersByTime(150)
     })
     expect(workspacePageHarness.sidebarPanelHandle.resize).toHaveBeenCalledWith('0%')
 
@@ -607,15 +611,9 @@ describe('WorkspacePage preview panel resize sync', () => {
     })
 
     expect(getSidebarToggle().getAttribute('aria-expanded')).toBe('true')
-    expect(motionHarness.animate).toHaveBeenLastCalledWith(
-      0,
-      16,
-      expect.objectContaining({
-        duration: 0.22,
-        ease: [0.22, 1, 0.36, 1],
-        onUpdate: expect.any(Function)
-      })
-    )
+    expect(workspacePageHarness.sidebarPanelHandle.resize).toHaveBeenLastCalledWith('16%')
+    expect(content?.className).toContain('translate-x-0')
+    expect(content?.className).toContain('opacity-100')
   })
 
   it('keeps the preview toggle floating outside the sidebar, expanded or collapsed', async () => {
@@ -841,31 +839,29 @@ describe('WorkspacePage preview panel resize sync', () => {
     expect(usePreviewWorkbenchStore.getState().panelState).toBe('open')
   })
 
-  it('syncs the initial collapsed preview size without running a close animation', async () => {
+  it('syncs the initial collapsed preview size without delaying layout', async () => {
     workspacePageHarness.previewSize = 40
 
     await renderPage()
 
     expect(workspacePageHarness.previewPanelDefaultSize).toBe('0%')
     expect(workspacePageHarness.previewPanelHandle.resize).toHaveBeenCalledWith('0%')
-    expect(motionHarness.animate).not.toHaveBeenCalled()
+    expect(workspacePageHarness.previewContentHidden).toBe(true)
   })
 
   it('retries once when the desktop panel layout is still registering', async () => {
     workspacePageHarness.previewSize = 40
-    workspacePageHarness.previewPanelHandle.getSize = vi
-      .fn()
+    workspacePageHarness.previewPanelHandle.resize = vi
+      .fn((size: number | string) => {
+        workspacePageHarness.previewSize = Number.parseFloat(String(size))
+      })
       .mockImplementationOnce(() => {
         throw new Error('Layout not found for Panel right-panel-resizable')
       })
-      .mockImplementation(() => ({
-        asPercentage: workspacePageHarness.previewSize,
-        inPixels: workspacePageHarness.previewSize * 10
-      }))
 
     await renderPage()
 
-    expect(workspacePageHarness.previewPanelHandle.getSize).toHaveBeenCalledTimes(2)
+    expect(workspacePageHarness.previewPanelHandle.resize).toHaveBeenCalledTimes(2)
     expect(workspacePageHarness.previewPanelHandle.resize).toHaveBeenCalledWith('0%')
   })
 
@@ -964,7 +960,7 @@ describe('WorkspacePage preview panel resize sync', () => {
     expect(container.querySelector('aside')?.getAttribute('data-mobile-open')).toBe('false')
   })
 
-  it('keeps an explicit open request when expand animation emits a near-zero resize', async () => {
+  it('keeps an explicit open request when layout reports a stale near-zero resize', async () => {
     await renderPage()
 
     const toggleButton = getPreviewToggle()
@@ -993,7 +989,7 @@ describe('WorkspacePage preview panel resize sync', () => {
     expect(usePreviewWorkbenchStore.getState().panelState).toBe('collapsed')
   })
 
-  it('keeps an explicit collapse request when animation resize lacks a previous size', async () => {
+  it('keeps an explicit collapse request while the content fade is pending', async () => {
     await renderPage()
 
     const toggleButton = getPreviewToggle()
@@ -1001,11 +997,6 @@ describe('WorkspacePage preview panel resize sync', () => {
       toggleButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     })
 
-    const openAnimationOptions = motionHarness.animate.mock.calls.at(-1)?.[2] as
-      { onUpdate?: (value: number) => void; onComplete?: () => void } | undefined
-    await act(async () => {
-      openAnimationOptions?.onComplete?.()
-    })
     expect(usePreviewWorkbenchStore.getState().panelState).toBe('open')
 
     await act(async () => {
@@ -1020,35 +1011,26 @@ describe('WorkspacePage preview panel resize sync', () => {
     expect(usePreviewWorkbenchStore.getState().panelState).toBe('collapsed')
   })
 
-  it('animates explicit preview open requests through panel percentage resize', async () => {
+  it('opens the preview with one target resize and a content-only transition', async () => {
     await renderPage()
+    vi.mocked(workspacePageHarness.previewPanelHandle.resize).mockClear()
 
     const toggleButton = getPreviewToggle()
     await act(async () => {
       toggleButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     })
 
-    expect(motionHarness.animate).toHaveBeenCalledWith(
-      0,
-      40,
-      expect.objectContaining({
-        duration: 0.22,
-        ease: [0.22, 1, 0.36, 1],
-        onUpdate: expect.any(Function)
-      })
-    )
-
-    const animationOptions = motionHarness.animate.mock.calls.at(-1)?.[2] as
-      { onUpdate?: (value: number) => void; onComplete?: () => void } | undefined
-
-    await act(async () => {
-      animationOptions?.onUpdate?.(24)
-    })
-
-    expect(workspacePageHarness.previewPanelHandle.resize).toHaveBeenCalledWith('24%')
+    expect(workspacePageHarness.previewPanelHandle.resize).toHaveBeenCalledTimes(1)
+    expect(workspacePageHarness.previewPanelHandle.resize).toHaveBeenCalledWith('40%')
+    expect(workspacePageHarness.previewContentClassName).toContain('transition-[opacity,transform]')
+    expect(workspacePageHarness.previewContentClassName).toContain('duration-150')
+    expect(workspacePageHarness.previewContentClassName).toContain('translate-x-0')
+    expect(workspacePageHarness.previewContentClassName).toContain('opacity-100')
+    expect(workspacePageHarness.previewContentHidden).toBe(false)
   })
 
-  it('does not resize a detached preview panel during an in-flight animation', async () => {
+  it('does not collapse a detached preview panel after its content fade', async () => {
+    vi.useFakeTimers()
     await renderPage()
 
     const toggleButton = getPreviewToggle()
@@ -1056,41 +1038,39 @@ describe('WorkspacePage preview panel resize sync', () => {
       toggleButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     })
 
-    const animationOptions = motionHarness.animate.mock.calls.at(-1)?.[2] as
-      { onUpdate?: (value: number) => void; onComplete?: () => void } | undefined
     vi.mocked(workspacePageHarness.previewPanelHandle.resize).mockClear()
+
+    await act(async () => {
+      toggleButton.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
     if (workspacePageHarness.previewPanelRef) {
       workspacePageHarness.previewPanelRef.current = null
     }
 
     await act(async () => {
-      animationOptions?.onUpdate?.(24)
-      animationOptions?.onComplete?.()
+      vi.advanceTimersByTime(150)
     })
 
     expect(workspacePageHarness.previewPanelHandle.resize).not.toHaveBeenCalled()
   })
 
-  it('temporarily relaxes the preview min size while programmatic animation runs', async () => {
+  it('uses the collapsed and open preview minimums for one-shot resizing', async () => {
     await renderPage()
 
-    expect(workspacePageHarness.previewPanelMinSize).toBe('30%')
+    expect(workspacePageHarness.previewPanelMinSize).toBe('0%')
 
     const toggleButton = getPreviewToggle()
     await act(async () => {
       toggleButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     })
 
-    expect(workspacePageHarness.previewPanelMinSize).toBe('0%')
-
-    const animationOptions = motionHarness.animate.mock.calls.at(-1)?.[2] as
-      { onUpdate?: (value: number) => void; onComplete?: () => void } | undefined
+    expect(workspacePageHarness.previewPanelMinSize).toBe('30%')
 
     await act(async () => {
-      animationOptions?.onComplete?.()
+      toggleButton.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     })
 
-    expect(workspacePageHarness.previewPanelMinSize).toBe('30%')
+    expect(workspacePageHarness.previewPanelMinSize).toBe('0%')
   })
 
   // Open sidebar keeps enough room for its navigation content while remaining collapsible.
@@ -1107,25 +1087,21 @@ describe('WorkspacePage preview panel resize sync', () => {
 
     expect(workspacePageHarness.sidebarPanelMinSize).toBe('0%')
 
-    const animationOptions = motionHarness.animate.mock.calls.at(-1)?.[2] as
-      { onUpdate?: (value: number) => void; onComplete?: () => void } | undefined
-
     await act(async () => {
-      animationOptions?.onComplete?.()
+      getSidebarToggle().dispatchEvent(new MouseEvent('click', { bubbles: true }))
     })
 
     expect(workspacePageHarness.sidebarPanelMinSize).toBe('16%')
   })
 
-  it('keeps the sidebar open when an expand animation reports a near-zero resize', async () => {
+  it('keeps the sidebar open when layout reports a stale near-zero resize', async () => {
+    vi.useFakeTimers()
     await renderPage()
 
     await act(async () => {
       getSidebarToggle().dispatchEvent(new MouseEvent('click', { bubbles: true }))
     })
-    const closeAnimationOptions = motionHarness.animate.mock.calls.at(-1)?.[2] as
-      { onComplete?: () => void } | undefined
-    await act(async () => closeAnimationOptions?.onComplete?.())
+    await act(async () => vi.advanceTimersByTime(150))
 
     await act(async () => {
       getSidebarToggle().dispatchEvent(new MouseEvent('click', { bubbles: true }))
@@ -1177,7 +1153,7 @@ describe('WorkspacePage preview panel resize sync', () => {
     expect(document.activeElement).toBe(toggleButton)
   })
 
-  it('lets an opposite sidebar drag interrupt a closing animation', async () => {
+  it('lets an opposite sidebar drag interrupt a pending collapse', async () => {
     await renderPage()
 
     await act(async () => {
@@ -1195,7 +1171,8 @@ describe('WorkspacePage preview panel resize sync', () => {
     expect(getSidebarToggle().getAttribute('aria-expanded')).toBe('true')
   })
 
-  it('does not resize a detached sidebar panel during an in-flight animation', async () => {
+  it('does not collapse a detached sidebar panel after its content fade', async () => {
+    vi.useFakeTimers()
     await renderPage()
 
     const toggleButton = getSidebarToggle()
@@ -1203,25 +1180,22 @@ describe('WorkspacePage preview panel resize sync', () => {
       toggleButton.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     })
 
-    const animationOptions = motionHarness.animate.mock.calls.at(-1)?.[2] as
-      { onUpdate?: (value: number) => void; onComplete?: () => void } | undefined
     vi.mocked(workspacePageHarness.sidebarPanelHandle.resize).mockClear()
     if (workspacePageHarness.sidebarPanelRef) {
       workspacePageHarness.sidebarPanelRef.current = null
     }
 
     await act(async () => {
-      animationOptions?.onUpdate?.(8)
-      animationOptions?.onComplete?.()
+      vi.advanceTimersByTime(150)
     })
 
     expect(workspacePageHarness.sidebarPanelHandle.resize).not.toHaveBeenCalled()
   })
 
-  it('skips sidebar animation when reduced motion is enabled', async () => {
+  it('collapses the sidebar immediately when reduced motion is enabled', async () => {
     vi.stubGlobal(
       'matchMedia',
-      vi.fn(() => ({ matches: true }))
+      vi.fn((query: string) => ({ matches: query === '(prefers-reduced-motion: reduce)' }))
     )
 
     await renderPage()
@@ -1231,7 +1205,32 @@ describe('WorkspacePage preview panel resize sync', () => {
       toggleButton.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     })
 
-    expect(motionHarness.animate).not.toHaveBeenCalled()
     expect(workspacePageHarness.sidebarPanelHandle.resize).toHaveBeenCalledWith('0%')
+    expect(
+      container.querySelector('[data-testid="workspace-sidebar-content"]')?.className
+    ).toContain('motion-reduce:transition-none')
+  })
+
+  it('settles ten rapid preview toggles in the final collapsed state', async () => {
+    vi.useFakeTimers()
+    await renderPage()
+    vi.mocked(workspacePageHarness.previewPanelHandle.resize).mockClear()
+
+    for (let click = 0; click < 10; click += 1) {
+      await act(async () => {
+        getPreviewToggle().dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      })
+    }
+
+    expect(getPreviewToggle().getAttribute('aria-expanded')).toBe('false')
+    expect(usePreviewWorkbenchStore.getState().panelState).toBe('collapsed')
+    expect(workspacePageHarness.previewContentHidden).toBe(true)
+    expect(workspacePageHarness.previewPanelHandle.resize).not.toHaveBeenCalledWith('0%')
+
+    await act(async () => vi.advanceTimersByTime(150))
+
+    expect(workspacePageHarness.previewPanelHandle.resize).toHaveBeenLastCalledWith('0%')
+    expect(workspacePageHarness.previewContentClassName).toContain('translate-x-2')
+    expect(workspacePageHarness.previewContentClassName).toContain('opacity-0')
   })
 })

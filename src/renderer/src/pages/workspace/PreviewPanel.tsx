@@ -41,11 +41,14 @@ type PreviewPanelProps = {
   defaultSize: string
   minSize: string
   onResize: (panelSize: PanelSize, previousPanelSize: PanelSize | undefined) => void
+  contentClassName?: string
+  contentHidden?: boolean
   restoredPlanResponder?: RestoredPlanResponder
 }
 
 type PreviewPanelSurfaceProps = {
   className?: string
+  hidden?: boolean
   restoredPlanResponder?: RestoredPlanResponder
 }
 
@@ -623,6 +626,7 @@ const PreviewSourcePanel = ({
 // tabs and active content inside a bottom sheet.
 const PreviewPanelSurface = ({
   className,
+  hidden = false,
   restoredPlanResponder
 }: PreviewPanelSurfaceProps): React.JSX.Element => {
   const items = usePreviewWorkbenchStore((state) => state.items)
@@ -689,6 +693,8 @@ const PreviewPanelSurface = ({
   return (
     <aside
       id="right-panel"
+      aria-hidden={hidden ? true : undefined}
+      inert={hidden ? true : undefined}
       className={cn(
         'relative flex h-full w-full flex-col overflow-hidden bg-bg-10 py-[0.7px]',
         className
@@ -787,6 +793,8 @@ const PreviewPanel = ({
   defaultSize,
   minSize,
   onResize,
+  contentClassName,
+  contentHidden,
   restoredPlanResponder
 }: PreviewPanelProps): React.JSX.Element => {
   const handleResize = (
@@ -808,7 +816,11 @@ const PreviewPanel = ({
       collapsedSize="0%"
       onResize={handleResize}
     >
-      <PreviewPanelSurface restoredPlanResponder={restoredPlanResponder} />
+      <PreviewPanelSurface
+        className={contentClassName}
+        hidden={contentHidden}
+        restoredPlanResponder={restoredPlanResponder}
+      />
     </ResizablePanel>
   )
 }
