@@ -27,6 +27,7 @@ const createMockClient = (
   project: Record<string, ReturnType<typeof vi.fn>>
   projectDeletionIntent: Record<string, ReturnType<typeof vi.fn>>
   projectPreviewState: { deleteMany: ReturnType<typeof vi.fn> }
+  literatureEvidence: { deleteMany: ReturnType<typeof vi.fn> }
   visionEvidence: { deleteMany: ReturnType<typeof vi.fn> }
   memoryEntry: { deleteMany: ReturnType<typeof vi.fn> }
   memorySettings: { update: ReturnType<typeof vi.fn> }
@@ -47,6 +48,7 @@ const createMockClient = (
   }
   const executeRaw = vi.fn().mockResolvedValue(1)
   const projectPreviewState = { deleteMany: vi.fn().mockResolvedValue({ count: 1 }) }
+  const literatureEvidence = { deleteMany: vi.fn().mockResolvedValue({ count: 1 }) }
   const visionEvidence = { deleteMany: vi.fn().mockResolvedValue({ count: 1 }) }
   const memoryEntry = { deleteMany: vi.fn().mockResolvedValue({ count: 1 }) }
   const memorySettings = {
@@ -59,6 +61,7 @@ const createMockClient = (
     project,
     projectDeletionIntent,
     projectPreviewState,
+    literatureEvidence,
     visionEvidence,
     memoryEntry,
     memorySettings
@@ -70,6 +73,7 @@ const createMockClient = (
     project,
     projectDeletionIntent,
     projectPreviewState,
+    literatureEvidence,
     visionEvidence,
     memoryEntry,
     memorySettings
@@ -207,7 +211,15 @@ describe('project repository', () => {
   })
 
   it('soft-deletes a project while removing active-only derived children', async () => {
-    const { client, project, projectPreviewState, visionEvidence, memoryEntry, memorySettings } =
+    const {
+      client,
+      project,
+      projectPreviewState,
+      literatureEvidence,
+      visionEvidence,
+      memoryEntry,
+      memorySettings
+    } =
       createMockClient({
         findUnique: () => Promise.resolve(createRow()),
         updateMany: () => Promise.resolve({ count: 1 })
@@ -217,6 +229,9 @@ describe('project repository', () => {
     await expect(repository.delete('project-1')).resolves.toEqual({ memoryRevision: 7 })
 
     expect(projectPreviewState.deleteMany).toHaveBeenCalledWith({
+      where: { projectId: 'project-1' }
+    })
+    expect(literatureEvidence.deleteMany).toHaveBeenCalledWith({
       where: { projectId: 'project-1' }
     })
     expect(visionEvidence.deleteMany).toHaveBeenCalledWith({ where: { projectId: 'project-1' } })

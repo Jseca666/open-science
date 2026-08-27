@@ -10,6 +10,7 @@ import {
   resolveActiveConversationMessages
 } from '../../shared/conversation-graph'
 import { buildSessionHistoryReplay } from '../../shared/session-history-replay'
+import { sessionPdfContextToFileReferences } from '../../shared/session-pdf-context'
 import {
   isHiddenControlMessage,
   sanitizeSessionReferences,
@@ -116,7 +117,7 @@ const buildContinuationRequest = (
   livePrompt: AcpPromptRequest | undefined
 ): AcpPromptRequest => {
   const skillIds = prompt.parts?.flatMap((part) => (part.type === 'skill' ? [part.id] : []))
-  const referencedArtifacts = prompt.parts?.reduce<
+  const referencedArtifacts = (prompt.parts ?? []).reduce<
     NonNullable<AcpPromptRequest['referencedArtifacts']>
   >((references, part) => {
     if (part.type !== 'artifact') return references
@@ -141,6 +142,24 @@ const buildContinuationRequest = (
     )
     return references
   }, [])
+  if (prompt.pdfContext) {
+    for (const pdfReference of sessionPdfContextToFileReferences(
+      session.projectId,
+      prompt.pdfContext
+    )) {
+      if (
+        !referencedArtifacts.some(
+          (reference) =>
+            reference.source !== 'linked-folder' &&
+            pdfReference.source !== 'linked-folder' &&
+            reference.source === pdfReference.source &&
+            reference.versionId === pdfReference.versionId
+        )
+      ) {
+        referencedArtifacts.push(pdfReference)
+      }
+    }
+  }
   const referencedSessions = sanitizeSessionReferences(prompt.parts)
   const provenanceContext = resolveProvenanceContext(session, request)
   const contextReset = request.contextReset

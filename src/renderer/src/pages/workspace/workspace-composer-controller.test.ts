@@ -6,6 +6,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { UploadedAttachment } from '../../../../shared/uploads'
 import type { TextAnnotation } from '../../../../shared/annotations'
 import type { CustomizePrefillIntent } from '@/stores/navigation-store'
+import {
+  createInitialPreviewWorkbenchState,
+  usePreviewWorkbenchStore
+} from '@/stores/preview-workbench-store'
 
 import type { UploadStagingApi } from './composer-upload-transfer'
 import {
@@ -77,7 +81,13 @@ type ControllerHook = {
 const renderController = (
   uploadApi = uploads(),
   loadSkills = vi.fn().mockResolvedValue(undefined),
-  historyEntries: ComposerHistoryEntry[] = []
+  historyEntries: ComposerHistoryEntry[] = [],
+  // Pass null to exercise the new-conversation draft (no active Session); undefined selects the
+  // default Session.
+  activeSession: Parameters<typeof useWorkspaceComposerController>[0]['activeSession'] | null = {
+    id: 'session-a',
+    projectId: 'project'
+  }
 ): ControllerHook => {
   let currentDraftKey = 'session-a'
   let pendingCustomizePrefill: CustomizePrefillIntent | undefined
@@ -94,7 +104,7 @@ const renderController = (
       pendingCustomizePrefill,
       onCustomizePrefillApplied: vi.fn(),
       historyEntries,
-      hasActiveSession: true,
+      activeSession: activeSession ?? undefined,
       historyPolicy: {
         catalogSkillIds: new Set(),
         allowedSkillIds: undefined,
@@ -135,10 +145,253 @@ const originalApi = window.api
 
 afterEach(() => {
   for (const hook of mounted.splice(0)) hook.unmount()
+  usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
   window.api = originalApi
 })
 
 describe('workspace composer controller', () => {
+  it('undoes and redoes Reading changes while coalescing rapid async mutations', async () => {
+    const source = {
+      sourceKind: 'upload-version' as const,
+      sourceVersionId: 'version-1'
+    }
+    const binding = {
+      version: 1 as const,
+      bindingId: 'binding-1',
+      ...source,
+      sourceFileId: 'upload-1',
+      sourceSessionId: 'source-session',
+      name: 'paper.pdf',
+      mimeType: 'application/pdf' as const,
+      sizeBytes: 42,
+      checksum: 'a'.repeat(64),
+      linkedAt: 1
+    }
+    const firstLink = deferred<{
+      version: 1
+      revision: number
+      pdfContext: { version: 1; bindings: [typeof binding] }
+    }>()
+    const linkPdfContext = vi
+      .fn()
+      .mockImplementationOnce(() => firstLink.promise)
+      .mockResolvedValueOnce({
+        version: 1,
+        revision: 3,
+        pdfContext: { version: 1, bindings: [binding] }
+      })
+    const unlinkPdfContext = vi.fn().mockResolvedValue({
+      version: 1,
+      revision: 2,
+      pdfContext: { version: 1, bindings: [] }
+    })
+    window.api = {
+      sessions: { linkPdfContext, unlinkPdfContext }
+    } as unknown as Window['api']
+    const hook = renderController(uploads(), undefined, [], {
+      id: 'session-a',
+      projectId: 'project',
+      runtimeContext: { revision: 0 }
+    })
+    mounted.push(hook)
+
+    let linking!: Promise<void>
+    act(() => {
+      linking = hook.result.current.actions.linkReadingContext(source)
+    })
+    act(() => expect(hook.result.current.actions.undo()).toBe(true))
+    expect(linkPdfContext).toHaveBeenCalledOnce()
+    expect(unlinkPdfContext).not.toHaveBeenCalled()
+
+    await act(async () => {
+      firstLink.resolve({
+        version: 1,
+        revision: 1,
+        pdfContext: { version: 1, bindings: [binding] }
+      })
+      await linking
+    })
+    expect(unlinkPdfContext).toHaveBeenCalledWith({
+      projectId: 'project',
+      sessionId: 'session-a',
+      expectedRevision: 1,
+      bindingId: 'binding-1'
+    })
+
+    act(() => expect(hook.result.current.actions.redo()).toBe(true))
+    await flushAsyncWork()
+    expect(linkPdfContext).toHaveBeenLastCalledWith({
+      projectId: 'project',
+      sessionId: 'session-a',
+      expectedRevision: 2,
+      sources: [source]
+    })
+  })
+
+  it('copies the transient PDF viewport position only when capturing a send snapshot', () => {
+    const pdfContext = {
+      version: 1 as const,
+      bindings: [
+        {
+          version: 1 as const,
+          bindingId: 'binding-1',
+          sourceKind: 'artifact-version' as const,
+          sourceFileId: 'artifact-1',
+          sourceVersionId: 'version-1',
+          sourceSessionId: 'source-session-1',
+          name: 'paper.pdf',
+          mimeType: 'application/pdf' as const,
+          sizeBytes: 42,
+          checksum: 'a'.repeat(64),
+          linkedAt: 1
+        }
+      ]
+    }
+    usePreviewWorkbenchStore.setState({
+      pdfReadingPositionByBindingId: {
+        'binding-1': { pageNumber: 7, pageCount: 14 }
+      }
+    })
+    const hook = renderController(uploads(), undefined, [], {
+      id: 'session-a',
+      projectId: 'project',
+      runtimeContext: { revision: 1, pdfContext }
+    })
+    mounted.push(hook)
+
+    // The view projection no longer exposes the live position (the chip dropped the page line);
+    // captureSend still snapshots it straight from the store.
+    expect(hook.result.current.view.readingContext).not.toHaveProperty('readingPosition')
+    expect(hook.result.current.view.readingContext.bindings[0]).toMatchObject({
+      bindingId: 'binding-1'
+    })
+    expect(hook.result.current.lifecycle.captureSend()).toMatchObject({
+      pdfReadingPosition: { pageNumber: 7, pageCount: 14 },
+      pdfContext: {
+        activeBindingId: 'binding-1',
+        readingPosition: { pageNumber: 7, pageCount: 14 }
+      }
+    })
+    expect(pdfContext).not.toHaveProperty('readingPosition')
+  })
+
+  it('shows a staged-upload draft selection while its attachment is in the draft', async () => {
+    const stageLocalFile = vi.fn().mockResolvedValue({
+      id: 'upload-pdf-1',
+      sessionId: '.pending',
+      name: 'paper.pdf',
+      originalName: 'paper.pdf',
+      path: '/uploads/.pending/paper.pdf',
+      mimeType: 'application/pdf',
+      size: 3
+    } satisfies UploadedAttachment)
+    const hook = renderController(uploads(stageLocalFile), undefined, [], null)
+    mounted.push(hook)
+
+    act(() =>
+      hook.result.current.actions.stageFiles([
+        new File(['pdf'], 'paper.pdf', { type: 'application/pdf' })
+      ])
+    )
+    await flushAsyncWork()
+    expect(hook.result.current.view.attachments).toHaveLength(1)
+    // The composer mirrors the draft's staged upload ids so preview surfaces can gate linking.
+    expect(usePreviewWorkbenchStore.getState().draftStagedUploadIds).toEqual(['upload-pdf-1'])
+
+    act(() =>
+      usePreviewWorkbenchStore.getState().setPendingPdfContext('project', {
+        kind: 'staged-upload',
+        attachmentId: 'upload-pdf-1',
+        previewItemId: 'upload:upload-pdf-1'
+      })
+    )
+
+    expect(hook.result.current.view.readingContext.bindings[0]).toMatchObject({
+      name: 'paper.pdf',
+      draftSelection: true
+    })
+    expect(usePreviewWorkbenchStore.getState().pendingPdfContextByProject.project).toBeDefined()
+  })
+
+  it('captures a PDF-only new-conversation reading intent without showing draft context', async () => {
+    const staged = ['paper-a.pdf', 'paper-b.pdf'].map((name, index) => ({
+      id: `upload-pdf-${index + 1}`,
+      sessionId: '.pending',
+      name,
+      originalName: name,
+      path: `/uploads/.pending/${name}`,
+      mimeType: 'application/pdf',
+      size: 3
+    })) satisfies UploadedAttachment[]
+    const stageLocalFile = vi.fn().mockResolvedValueOnce(staged[0]).mockResolvedValueOnce(staged[1])
+    const hook = renderController(uploads(stageLocalFile), undefined, [], null)
+    mounted.push(hook)
+
+    act(() =>
+      hook.result.current.actions.stageFiles([
+        new File(['pdf'], 'paper-a.pdf', { type: 'application/pdf' }),
+        new File(['pdf'], 'paper-b.pdf', { type: 'application/pdf' })
+      ])
+    )
+    await flushAsyncWork()
+
+    expect(hook.result.current.view.readingContext.bindings).toEqual([])
+    expect(usePreviewWorkbenchStore.getState().pendingPdfContextByProject.project).toBeUndefined()
+    expect(hook.result.current.lifecycle.captureSend()).toMatchObject({
+      pendingPdfContextAttachmentIds: ['upload-pdf-1', 'upload-pdf-2']
+    })
+  })
+
+  it('adds an immutable PDF mentioned with @ as a send-time Reading candidate', () => {
+    const hook = renderController()
+    mounted.push(hook)
+    act(() =>
+      hook.result.current.actions.changeDoc({
+        nodes: [
+          { type: 'text', text: 'Summarize ' },
+          {
+            type: 'artifact',
+            id: 'paper',
+            name: 'paper.pdf',
+            path: '/paper.pdf',
+            source: 'artifact',
+            mimeType: 'application/pdf',
+            versionId: 'paper-version'
+          }
+        ]
+      })
+    )
+
+    expect(hook.result.current.lifecycle.captureSend()).toMatchObject({
+      pendingPdfContextVersions: [
+        { sourceKind: 'artifact-version', sourceVersionId: 'paper-version' }
+      ]
+    })
+    expect(hook.result.current.lifecycle.captureSend(false)).toMatchObject({
+      pendingPdfContextVersions: [
+        { sourceKind: 'artifact-version', sourceVersionId: 'paper-version' }
+      ]
+    })
+  })
+
+  it('clears a staged-upload draft selection whose attachment is not in the draft', () => {
+    const hook = renderController(uploads(), undefined, [], null)
+    mounted.push(hook)
+
+    // A preview tab can outlive its composer attachment; a selection pointing at the missing
+    // upload would read linked in the preview header while no chip or send could honor it.
+    act(() =>
+      usePreviewWorkbenchStore.getState().setPendingPdfContext('project', {
+        kind: 'staged-upload',
+        attachmentId: 'upload-gone',
+        previewItemId: 'upload:upload-gone'
+      })
+    )
+
+    expect(usePreviewWorkbenchStore.getState().pendingPdfContextByProject.project).toBeUndefined()
+    expect(hook.result.current.view.readingContext.bindings).toEqual([])
+  })
+
   it('owns annotations in the draft and captured send snapshot', () => {
     const hook = renderController()
     mounted.push(hook)

@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { VISION_MODEL_NOT_CONFIGURED_MESSAGE } from '../../../../shared/run-error-classification'
 import type { UploadedAttachment } from '../../../../shared/uploads'
 import type { Annotation } from '../../../../shared/annotations'
+import type { SessionPdfContextSource } from '../../../../shared/session-persistence'
 
 import { planComposerAttachmentIntake } from './composer-attachment-intake'
 import {
@@ -39,6 +40,7 @@ type PastedTextUndoReceipt = {
 
 type ComposerHistorySnapshot = Omit<ComposerDraft, 'annotations'> & {
   caret?: ComposerCaretPosition
+  readingContextSources: SessionPdfContextSource[]
 }
 type ComposerHistoryRef = { current: Record<string, ComposerHistorySnapshot[]> }
 
@@ -57,6 +59,8 @@ type WorkspaceComposerUploadControllerInput = {
   canStageAttachments: boolean
   supportsImageInput: boolean | undefined
   uploads: ComposerUploadApi
+  readingContextSourcesRef: { current: SessionPdfContextSource[] }
+  restoreReadingContextSources: (sources: SessionPdfContextSource[]) => void
 }
 
 type WorkspaceComposerUploadController = {
@@ -82,6 +86,7 @@ type WorkspaceComposerUploadController = {
     setError: (error: string | null) => void
     clearPastedTextUndo: (draftKey?: string) => void
     clearUndo: (draftKey?: string) => void
+    captureUndo: (draftKey?: string, caret?: ComposerCaretPosition) => void
   }
   lifecycle: {
     activateDraftAttachments: (draft: ComposerDraft) => void
@@ -129,7 +134,9 @@ export const useWorkspaceComposerUploadController = ({
   requestCaret,
   canStageAttachments,
   supportsImageInput,
-  uploads
+  uploads,
+  readingContextSourcesRef,
+  restoreReadingContextSources
 }: WorkspaceComposerUploadControllerInput): WorkspaceComposerUploadController => {
   const [attachments, setAttachments] = useState<UploadedAttachment[]>([])
   const [transfers, setTransfers] = useState<ComposerUploadTransfer[]>([])
@@ -222,9 +229,10 @@ export const useWorkspaceComposerUploadController = ({
       doc: docRef.current,
       attachments: [...attachmentsRef.current],
       attachmentTransfers: [...transfersRef.current],
+      readingContextSources: [...readingContextSourcesRef.current],
       caret
     }),
-    [docRef]
+    [docRef, readingContextSourcesRef]
   )
   const releaseHistoryResources = useCallback(
     (snapshots: readonly ComposerHistorySnapshot[]): void => {
@@ -926,6 +934,7 @@ export const useWorkspaceComposerUploadController = ({
         setActiveDoc(targetDoc)
       }
       if (pending.length > 0) runPendingUploads(draftKey, pending)
+      restoreReadingContextSources(snapshot.readingContextSources)
       releaseHistoryResources(resourcesToRelease)
       requestCaret(snapshot.caret ?? { nodeIndex: targetDoc.nodes.length, offset: 0 })
     },
@@ -942,6 +951,7 @@ export const useWorkspaceComposerUploadController = ({
       setActiveDoc,
       setActiveTransfers,
       stagePastedText,
+      restoreReadingContextSources,
       uploads
     ]
   )
@@ -1153,7 +1163,8 @@ export const useWorkspaceComposerUploadController = ({
       redo,
       setError,
       clearPastedTextUndo,
-      clearUndo
+      clearUndo,
+      captureUndo
     },
     lifecycle: {
       activateDraftAttachments,

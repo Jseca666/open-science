@@ -9,6 +9,8 @@ import {
   canInlineImageInSession,
   consumeInlineImageBudget,
   extractPdfText,
+  extractPdfPageText,
+  inspectPdfPageCount,
   ImageContentError,
   MAX_AUTO_EXTRACT_PDF_BYTES,
   MAX_AUTO_PROCESS_IMAGE_BYTES,
@@ -597,6 +599,13 @@ describe('consumeInlineImageBudget', () => {
 })
 
 describe('extractPdfText', () => {
+  it('reads PDF page count without extracting page text', async () => {
+    const filePath = join(root, 'count.pdf')
+    await writeFile(filePath, Buffer.from('%PDF-1.4 fake'))
+
+    await expect(inspectPdfPageCount(filePath)).resolves.toBe(2)
+  })
+
   it('does not read PDF sources above the automatic extraction limit', async () => {
     const filePath = join(root, 'huge.pdf')
     await writeFile(filePath, Buffer.from('%PDF-1.4'))
@@ -617,6 +626,17 @@ describe('extractPdfText', () => {
     expect(result.text).toBe('--- Page 1 ---\nHello world\n\n--- Page 2 ---\nSecond page')
   })
 
+  it('extracts only the requested PDF page', async () => {
+    const filePath = join(root, 'page.pdf')
+    await writeFile(filePath, Buffer.from('%PDF-1.4 fake'))
+
+    const result = await extractPdfText(filePath, 2)
+
+    expect(result.pageCount).toBe(2)
+    expect(result.truncated).toBe(false)
+    expect(result.text).toBe('--- Page 2 ---\nSecond page')
+  })
+
   it('returns empty text for a PDF with no extractable content', async () => {
     fakePdf = { numPages: 1, pages: [[]] }
     const filePath = join(root, 'scanned.pdf')
@@ -626,6 +646,14 @@ describe('extractPdfText', () => {
 
     expect(result.pageCount).toBe(1)
     expect(result.text).toBe('')
+  })
+
+  it('selects one exact page from extracted PDF text', () => {
+    const text =
+      '--- Page 1 ---\nFirst page\n\n--- Page 2 ---\nSecond page\n\n--- Page 3 ---\nThird page'
+
+    expect(extractPdfPageText(text, 2)).toBe('--- Page 2 ---\nSecond page')
+    expect(extractPdfPageText(text, 4)).toBeUndefined()
   })
 })
 

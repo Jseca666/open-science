@@ -499,6 +499,7 @@ type WorkspacePanelLayoutProps = {
   isPreviewPresentationActive?: boolean
   restoredPlanResponder?: RestoredPlanResponder
   previewAnnotations?: PreviewAnnotationPort
+  onPdfContextError?: (message: string | null) => void
   preview: PreviewPanelLayoutPort
   renderDesktopSidebar: (options: {
     sidebarToggle: {
@@ -521,6 +522,7 @@ const WorkspacePanelLayout = ({
   isPreviewPresentationActive = true,
   restoredPlanResponder,
   previewAnnotations,
+  onPdfContextError,
   preview: previewPort,
   renderDesktopSidebar,
   renderMobileSidebar,
@@ -629,6 +631,7 @@ const WorkspacePanelLayout = ({
                 onResize={preview.onResize}
                 restoredPlanResponder={restoredPlanResponder}
                 {...previewAnnotations}
+                onPdfContextError={onPdfContextError}
               />
             </>
           ) : null}
@@ -643,6 +646,7 @@ const WorkspacePanelLayout = ({
           onClose={preview.collapse}
           restoredPlanResponder={restoredPlanResponder}
           {...previewAnnotations}
+          onPdfContextError={onPdfContextError}
         />
       ) : null}
     </>

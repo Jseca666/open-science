@@ -12,7 +12,7 @@ type PrismaRelationContract = Readonly<{
   field: string
   target: string
   fromFields: readonly string[]
-  onDelete: 'Cascade' | 'Restrict'
+  onDelete: 'Cascade' | 'Restrict' | 'SetNull'
 }>
 
 type PrismaOwnerModel = Readonly<{
@@ -195,6 +195,44 @@ const PROJECT_OWNED_DATA_CATALOG: readonly ProjectOwnedDataCatalogEntry[] = [
       path: 'project-metadata-soft-delete',
       operation: 'ProjectRepository.delete',
       note: 'Derived evidence is explicitly removed before retaining the Project metadata row.'
+    }
+  },
+  {
+    id: 'literature-persistence',
+    medium: 'sqlite',
+    resources: ['LiteratureExtraction', 'LiteratureEvidence'],
+    prismaModels: [
+      {
+        name: 'LiteratureEvidence',
+        ownerFields: [requiredOwner('projectId'), requiredOwner('sessionId')],
+        relationContracts: [
+          {
+            field: 'project',
+            target: 'Project',
+            fromFields: ['projectId'],
+            onDelete: 'Cascade'
+          },
+          {
+            field: 'uploadVersion',
+            target: 'UploadVersion',
+            fromFields: ['uploadVersionId'],
+            onDelete: 'SetNull'
+          },
+          {
+            field: 'extraction',
+            target: 'LiteratureExtraction',
+            fromFields: ['extractionId'],
+            onDelete: 'SetNull'
+          }
+        ]
+      }
+    ],
+    policy: {
+      kind: 'coordinator-cleanup',
+      effect: 'hard-delete',
+      path: 'project-metadata-soft-delete',
+      operation: 'ProjectRepository.delete',
+      note: 'Session-scoped Evidence is removed with its Project; rebuildable extractions cascade with UploadVersion deletion.'
     }
   },
   {

@@ -194,6 +194,9 @@ const mergeRuntimeContextByOwner = (
     ...(authoritative.sideChat ? { sideChat: structuredClone(authoritative.sideChat) } : {}),
     ...(authoritative.sideChatRelays
       ? { sideChatRelays: structuredClone(authoritative.sideChatRelays) }
+      : {}),
+    ...((authoritative.pdfContext ?? fallback.pdfContext)
+      ? { pdfContext: structuredClone(authoritative.pdfContext ?? fallback.pdfContext!) }
       : {})
   }
 }
@@ -216,7 +219,8 @@ const mergeDelegatedRuntimeAuthority = (
     ...(delegatedWork ? { delegatedWork } : {}),
     ...(current?.permission ? { permission: structuredClone(current.permission) } : {}),
     ...(current?.sideChat ? { sideChat: structuredClone(current.sideChat) } : {}),
-    ...(current?.sideChatRelays ? { sideChatRelays: structuredClone(current.sideChatRelays) } : {})
+    ...(current?.sideChatRelays ? { sideChatRelays: structuredClone(current.sideChatRelays) } : {}),
+    ...(current?.pdfContext ? { pdfContext: structuredClone(current.pdfContext) } : {})
   }
 }
 

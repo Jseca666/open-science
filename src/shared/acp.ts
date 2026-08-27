@@ -740,6 +740,9 @@ export type AcpCreateSessionRequest = {
   // session-creation time — the renderer MUST NOT send systemPrompt or capability data, only the
   // stable ID. Absent or undefined means no specialist; use Main Agent.
   specialistId?: string
+  // The first prompt will link a PDF before dispatch. Provision Literature with session/new so a
+  // provider that has not produced its first resumable rollout does not need an immediate resume.
+  literatureContext?: true
   agentTarget?: AcpSessionAgentTarget
 }
 

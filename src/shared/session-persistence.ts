@@ -99,7 +99,68 @@ export type SessionRuntimeContextValue =
   | { [key: string]: SessionRuntimeContextValue }
 
 export type SessionRuntimeContextOwner =
-  'plan' | 'delegatedWork' | 'permission' | 'sideChat' | 'sideChatRelays'
+  'plan' | 'delegatedWork' | 'permission' | 'sideChat' | 'sideChatRelays' | 'pdfContext'
+
+export const MAX_SESSION_PDF_CONTEXTS = 3
+
+export type SessionPdfBinding = Readonly<{
+  version: 1
+  bindingId: string
+  sourceKind: 'artifact-version' | 'upload-version'
+  sourceFileId: string
+  sourceVersionId: string
+  sourceSessionId: string
+  name: string
+  mimeType: 'application/pdf'
+  sizeBytes: number
+  checksum: string
+  linkedAt: number
+}>
+
+export type SessionPdfContext = Readonly<{
+  version: 1
+  bindings: readonly SessionPdfBinding[]
+}>
+
+export type PdfReadingPosition = Readonly<{
+  pageNumber: number
+  pageCount: number
+}>
+
+export type MessagePdfContextSnapshot = SessionPdfContext &
+  Readonly<{
+    activeBindingId?: string
+    readingPosition?: PdfReadingPosition
+  }>
+
+export type SessionPdfContextSource = Readonly<{
+  sourceKind: SessionPdfBinding['sourceKind']
+  sourceVersionId: string
+}>
+
+export type FilterSessionPdfContextCandidatesRequest = Readonly<{
+  projectId: string
+  sources: readonly SessionPdfContextSource[]
+}>
+
+export type FilterSessionPdfContextCandidatesResult = Readonly<{
+  sources: readonly SessionPdfContextSource[]
+}>
+
+export type LinkSessionPdfContextRequest = Readonly<{
+  projectId: string
+  sessionId: string
+  expectedRevision: number
+  sources: readonly SessionPdfContextSource[]
+  excludeSinglePage?: boolean
+}>
+
+export type UnlinkSessionPdfContextRequest = Readonly<{
+  projectId: string
+  sessionId: string
+  expectedRevision: number
+  bindingId: string
+}>
 
 export type DelegatedWorkAttemptStatus = 'running' | 'completed' | 'cancelled' | 'error'
 export type DelegatedWorkCancellationReason =
@@ -308,6 +369,7 @@ export type SessionRuntimeContext = Readonly<{
   plan?: SessionPlanRuntimeContext
   delegatedWork?: SessionDelegatedWorkRuntimeContext
   permission?: SessionPermissionRuntimeContext
+  pdfContext?: SessionPdfContext
   sideChat?: PersistedSideChat
   sideChatRelays?: readonly PersistedSideChatRelay[]
 }>
@@ -317,6 +379,7 @@ export type SessionRuntimeContextPatch = Readonly<
     plan: SessionPlanRuntimeContext | undefined
     delegatedWork: SessionDelegatedWorkRuntimeContext | undefined
     permission: SessionPermissionRuntimeContext | undefined
+    pdfContext: SessionPdfContext | undefined
     sideChat: PersistedSideChat | undefined
     sideChatRelays: readonly PersistedSideChatRelay[] | undefined
   }>
@@ -412,6 +475,9 @@ export type PersistedChatMessage = {
   images?: PersistedMessageImage[]
   // Structured mention segments for the styled user bubble; optional for backward compatibility.
   parts?: MessagePart[]
+  // Immutable PDF context captured when this user turn was admitted. It remains independent from
+  // the Session's mutable binding so queue, retry, edit-resend, and interrupted resume cannot drift.
+  pdfContext?: MessagePdfContextSnapshot
   // Closed turn identity needed to reconstruct an interrupted turn after an app restart. Ordinary
   // messages omit it; unknown values are discarded by the persistence sanitizer.
   turnIntent?: 'plan-first' | 'save-as-skill'
@@ -2043,6 +2109,111 @@ const sanitizeSessionDelegatedWorkRuntimeContext = (
   }
 }
 const PERMISSION_FINGERPRINT_PATTERN = /^[a-f0-9]{64}$/
+const PDF_CONTEXT_CHECKSUM_PATTERN = /^[a-f0-9]{64}$/
+
+const sanitizeSessionPdfBinding = (value: unknown): SessionPdfBinding | undefined => {
+  if (!isRecord(value) || value.version !== 1) return undefined
+  const bindingId = asString(value.bindingId)
+  const sourceKind = asString(value.sourceKind)
+  const sourceFileId = asString(value.sourceFileId)
+  const sourceVersionId = asString(value.sourceVersionId)
+  const sourceSessionId = asString(value.sourceSessionId)
+  const name = asString(value.name)
+  const sizeBytes = asNumber(value.sizeBytes)
+  const checksum = asString(value.checksum)
+  const linkedAt = asNumber(value.linkedAt)
+  if (
+    !bindingId ||
+    bindingId.length > 512 ||
+    (sourceKind !== 'artifact-version' && sourceKind !== 'upload-version') ||
+    !sourceFileId ||
+    sourceFileId.length > 512 ||
+    !sourceVersionId ||
+    sourceVersionId.length > 512 ||
+    !sourceSessionId ||
+    sourceSessionId.length > 512 ||
+    !name ||
+    name.length > 4096 ||
+    value.mimeType !== 'application/pdf' ||
+    sizeBytes === undefined ||
+    !Number.isSafeInteger(sizeBytes) ||
+    sizeBytes < 0 ||
+    !checksum ||
+    !PDF_CONTEXT_CHECKSUM_PATTERN.test(checksum) ||
+    linkedAt === undefined ||
+    !Number.isSafeInteger(linkedAt) ||
+    linkedAt < 0
+  ) {
+    return undefined
+  }
+  return {
+    version: 1,
+    bindingId,
+    sourceKind,
+    sourceFileId,
+    sourceVersionId,
+    sourceSessionId,
+    name,
+    mimeType: 'application/pdf',
+    sizeBytes,
+    checksum,
+    linkedAt
+  }
+}
+
+export const sanitizeSessionPdfContext = (value: unknown): SessionPdfContext | undefined => {
+  if (
+    !isRecord(value) ||
+    value.version !== 1 ||
+    !Array.isArray(value.bindings) ||
+    value.bindings.length < 1 ||
+    value.bindings.length > MAX_SESSION_PDF_CONTEXTS
+  ) {
+    return undefined
+  }
+  const bindings = value.bindings.map(sanitizeSessionPdfBinding)
+  if (bindings.some((binding) => binding === undefined)) return undefined
+  const validBindings = bindings as SessionPdfBinding[]
+  const identities = validBindings.map(
+    ({ sourceKind, sourceVersionId }) => `${sourceKind}:${sourceVersionId}`
+  )
+  if (
+    new Set(validBindings.map(({ bindingId }) => bindingId)).size !== validBindings.length ||
+    new Set(identities).size !== identities.length
+  ) {
+    return undefined
+  }
+  return { version: 1, bindings: validBindings }
+}
+
+export const sanitizeMessagePdfContextSnapshot = (
+  value: unknown
+): MessagePdfContextSnapshot | undefined => {
+  const context = sanitizeSessionPdfContext(value)
+  if (!context || !isRecord(value)) return context
+  const activeBindingId = asString(value.activeBindingId)
+  if (
+    !activeBindingId ||
+    !context.bindings.some(({ bindingId }) => bindingId === activeBindingId)
+  ) {
+    return context
+  }
+  if (value.readingPosition === undefined) return { ...context, activeBindingId }
+  if (!isRecord(value.readingPosition)) return context
+  const pageNumber = asNumber(value.readingPosition.pageNumber)
+  const pageCount = asNumber(value.readingPosition.pageCount)
+  if (
+    pageNumber === undefined ||
+    pageCount === undefined ||
+    !Number.isSafeInteger(pageNumber) ||
+    !Number.isSafeInteger(pageCount) ||
+    pageNumber < 1 ||
+    pageCount < pageNumber
+  ) {
+    return { ...context, activeBindingId }
+  }
+  return { ...context, activeBindingId, readingPosition: { pageNumber, pageCount } }
+}
 const PERMISSION_SCOPES = new Set(['once', 'session', 'project', 'global'])
 const PERMISSION_OPTION_KINDS = new Set([
   'allow_once',
@@ -2262,6 +2433,7 @@ export const sanitizeSessionRuntimeContext = (
     plan?: SessionPlanRuntimeContext
     delegatedWork?: SessionDelegatedWorkRuntimeContext
     permission?: SessionPermissionRuntimeContext
+    pdfContext?: SessionPdfContext
     sideChat?: PersistedSideChat
     sideChatRelays?: readonly PersistedSideChatRelay[]
   } = {
@@ -2273,10 +2445,19 @@ export const sanitizeSessionRuntimeContext = (
   const budget = { remaining: 2_000 }
   for (const [owner, ownerValue] of Object.entries(value)) {
     if (owner === 'version' || owner === 'revision') continue
-    if (owner === 'plan' || owner === 'delegatedWork' || owner === 'permission') {
+    if (
+      owner === 'plan' ||
+      owner === 'delegatedWork' ||
+      owner === 'permission' ||
+      owner === 'pdfContext'
+    ) {
       const sanitizedJson = sanitizeRuntimeContextValue(ownerValue, budget)
       if (sanitizedJson === undefined) return undefined
-      if (owner === 'plan') {
+      if (owner === 'pdfContext') {
+        const pdfContext = sanitizeSessionPdfContext(sanitizedJson)
+        if (!pdfContext) return undefined
+        result.pdfContext = pdfContext
+      } else if (owner === 'plan') {
         const plan = sanitizeSessionPlanRuntimeContext(sanitizedJson)
         if (!plan) return undefined
         result.plan = plan
@@ -3260,6 +3441,8 @@ const sanitizeMessage = (
     ? message.parts.map(sanitizeMessagePart).filter((item): item is MessagePart => !!item)
     : []
   const annotations = role === 'user' ? sanitizeAnnotations(message.annotations) : []
+  const pdfContext =
+    role === 'user' ? sanitizeMessagePdfContextSnapshot(message.pdfContext) : undefined
   const images = sanitizeMessageImages(message.images)
   const turnUsage = role === 'agent' ? sanitizeAcpTurnTokenUsage(message.turnUsage) : undefined
   const candidateModelCallUsage =
@@ -3316,6 +3499,7 @@ const sanitizeMessage = (
   if (uploads.length > 0) sanitized.uploads = uploads
   if (parts.length > 0) sanitized.parts = parts
   if (annotations.length > 0) sanitized.annotations = annotations
+  if (pdfContext) sanitized.pdfContext = pdfContext
   if (
     role === 'user' &&
     (message.turnIntent === 'plan-first' || message.turnIntent === 'save-as-skill')
@@ -4192,6 +4376,43 @@ export type LoadSessionRequest = {
   sessionId: string
 }
 
+const sessionPdfContextSourceSchema = z
+  .object({
+    sourceKind: z.enum(['artifact-version', 'upload-version']),
+    sourceVersionId: z.string().min(1)
+  })
+  .strict()
+
+export const filterSessionPdfContextCandidatesRequestSchema = z
+  .object({
+    projectId: z.string().min(1),
+    sources: z.array(sessionPdfContextSourceSchema).min(1).max(100)
+  })
+  .strict()
+
+export const filterSessionPdfContextCandidatesResultSchema = z
+  .object({ sources: z.array(sessionPdfContextSourceSchema).max(100) })
+  .strict()
+
+export const linkSessionPdfContextRequestSchema = z
+  .object({
+    projectId: z.string().min(1),
+    sessionId: z.string().min(1),
+    expectedRevision: z.number().int().nonnegative(),
+    sources: z.array(sessionPdfContextSourceSchema).min(1).max(MAX_SESSION_PDF_CONTEXTS),
+    excludeSinglePage: z.boolean().optional()
+  })
+  .strict()
+
+export const unlinkSessionPdfContextRequestSchema = z
+  .object({
+    projectId: z.string().min(1),
+    sessionId: z.string().min(1),
+    expectedRevision: z.number().int().nonnegative(),
+    bindingId: z.string().min(1)
+  })
+  .strict()
+
 export const deleteSessionRequestSchema = z
   .object({ projectId: z.string(), sessionId: z.string() })
   .strict()
@@ -4248,6 +4469,22 @@ export type SaveSessionManifestRequest = {
 // and result schemas double as the wire types so the router enforces exactly the union the
 // SessionDeletionOwner can produce.
 export const sessionApplicationCommandContracts = Object.freeze({
+  filterPdfContextCandidates: defineApplicationCommandContract(
+    validationCodec(z.tuple([filterSessionPdfContextCandidatesRequestSchema])),
+    validationCodec(filterSessionPdfContextCandidatesResultSchema)
+  ),
+  linkPdfContext: defineApplicationCommandContract(
+    validationCodec(z.tuple([linkSessionPdfContextRequestSchema])),
+    validationCodec(
+      z.custom<SessionRuntimeContext>((value) => sanitizeSessionRuntimeContext(value) !== undefined)
+    )
+  ),
+  unlinkPdfContext: defineApplicationCommandContract(
+    validationCodec(z.tuple([unlinkSessionPdfContextRequestSchema])),
+    validationCodec(
+      z.custom<SessionRuntimeContext>((value) => sanitizeSessionRuntimeContext(value) !== undefined)
+    )
+  ),
   delete: defineApplicationCommandContract(
     validationCodec(z.tuple([deleteSessionRequestSchema])),
     validationCodec(sessionDeletionResultSchema)

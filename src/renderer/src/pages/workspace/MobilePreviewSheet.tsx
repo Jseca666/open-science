@@ -10,6 +10,7 @@ type MobilePreviewSheetProps = PreviewAnnotationPort & {
   open: boolean
   onClose: () => void
   restoredPlanResponder?: RestoredPlanResponder
+  onPdfContextError?: (message: string | null) => void
 }
 
 // Mobile workbench presentation: generated files, code, and notebooks keep the desktop tab model,
@@ -18,6 +19,7 @@ const MobilePreviewSheet = ({
   open,
   onClose,
   restoredPlanResponder,
+  onPdfContextError,
   ...annotationPort
 }: MobilePreviewSheetProps): React.JSX.Element => {
   const { t } = useTranslation()
@@ -52,6 +54,7 @@ const MobilePreviewSheet = ({
             className="min-h-0 flex-1"
             restoredPlanResponder={restoredPlanResponder}
             {...annotationPort}
+            onPdfContextError={onPdfContextError}
           />
         </Dialog.Content>
       </Dialog.Portal>

@@ -1476,6 +1476,52 @@ describe('workspace message queue controller', () => {
     ])
   })
 
+  it('defers a queued PDF snapshot until idle instead of steering mutable context mid-turn', async () => {
+    const steerFollowUp = vi.fn(async () => ({
+      injected: true as const,
+      transport: 'acp-steering' as const,
+      messageId: 'message-steer'
+    }))
+    const input = options(session(), {
+      runtime: {
+        cancelRun: vi.fn(async () => undefined),
+        sendMessage: vi.fn(),
+        steerFollowUp
+      }
+    })
+    const hook = renderController(input)
+    mounted.push(hook)
+    const queued = admission('read this paper')
+    queued.snapshot.pdfContext = {
+      version: 1,
+      bindings: [
+        {
+          version: 1,
+          bindingId: 'binding-1',
+          sourceKind: 'artifact-version',
+          sourceFileId: 'artifact-1',
+          sourceVersionId: 'version-1',
+          sourceSessionId: 'source-session-1',
+          name: 'paper.pdf',
+          mimeType: 'application/pdf',
+          sizeBytes: 42,
+          checksum: 'a'.repeat(64),
+          linkedAt: 1
+        }
+      ]
+    }
+    act(() => hook.result.current.lifecycle.enqueue(queued))
+
+    await act(async () => hook.result.current.actions.sendNow(hook.result.current.items[0].id))
+
+    expect(steerFollowUp).not.toHaveBeenCalled()
+    expect(input.runtime.cancelRun).not.toHaveBeenCalled()
+    expect(hook.result.current.items[0]).toMatchObject({
+      phase: 'queued',
+      deferredUntilIdle: true
+    })
+  })
+
   it('requeues when native follow-up is refused instead of interrupting', async () => {
     let currentSession = session()
     const input = options(currentSession, {

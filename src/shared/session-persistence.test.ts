@@ -15,6 +15,7 @@ import {
   normalizeSessionFile,
   sanitizeMessageAttribution,
   sanitizeMessageImages,
+  sanitizeSessionPdfContext,
   sanitizeSessionRuntimeContext,
   sanitizeToolActivity,
   type PersistedChatMessage,
@@ -4158,5 +4159,89 @@ describe('normalizeSessionFile with activities', () => {
     })
 
     expect(restored?.sessionDetailsGeneration).toBeUndefined()
+  })
+
+  it('accepts only bounded immutable PDF context snapshots', () => {
+    const binding = {
+      version: 1,
+      bindingId: 'binding-1',
+      sourceKind: 'upload-version',
+      sourceFileId: 'upload-1',
+      sourceVersionId: 'version-1',
+      sourceSessionId: 'source-session-1',
+      name: 'paper.pdf',
+      mimeType: 'application/pdf',
+      sizeBytes: 42,
+      checksum: 'a'.repeat(64),
+      linkedAt: 10
+    }
+    const snapshot = { version: 1, bindings: [binding] }
+
+    expect(sanitizeSessionPdfContext(snapshot)).toEqual(snapshot)
+    expect(
+      sanitizeSessionPdfContext({ version: 1, bindings: [{ ...binding, sourceKind: 'local' }] })
+    ).toBeUndefined()
+    expect(
+      sanitizeSessionPdfContext({
+        version: 1,
+        bindings: [{ ...binding, checksum: 'not-a-checksum' }]
+      })
+    ).toBeUndefined()
+    expect(
+      sanitizeSessionPdfContext({
+        version: 1,
+        bindings: [{ ...binding, name: 'x'.repeat(4097) }]
+      })
+    ).toBeUndefined()
+    expect(
+      sanitizeSessionPdfContext({ version: 1, bindings: [binding, binding, binding, binding] })
+    ).toBeUndefined()
+  })
+
+  it('preserves a valid PDF reading position only on the immutable user Message snapshot', () => {
+    const binding = {
+      version: 1,
+      bindingId: 'binding-1',
+      sourceKind: 'upload-version',
+      sourceFileId: 'upload-1',
+      sourceVersionId: 'version-1',
+      sourceSessionId: 'source-session-1',
+      name: 'paper.pdf',
+      mimeType: 'application/pdf',
+      sizeBytes: 42,
+      checksum: 'a'.repeat(64),
+      linkedAt: 10
+    }
+    const pdfContext = {
+      version: 1,
+      bindings: [binding],
+      activeBindingId: binding.bindingId,
+      readingPosition: { pageNumber: 7, pageCount: 14 }
+    }
+    const restored = normalizeSessionFile({
+      id: 'session-1',
+      projectId: 'project-1',
+      title: 'Reading',
+      cwd: '/workspace',
+      status: 'idle',
+      runtimeContext: { version: 1, revision: 1, pdfContext },
+      messages: [
+        {
+          id: 'message-1',
+          role: 'user',
+          content: 'Which page am I reading?',
+          status: 'complete',
+          eventIds: [],
+          pdfContext,
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ]
+    })
+
+    expect(restored?.runtimeContext?.pdfContext).toEqual({ version: 1, bindings: [binding] })
+    expect(restored?.messages[0].pdfContext).toMatchObject({
+      readingPosition: { pageNumber: 7, pageCount: 14 }
+    })
   })
 })

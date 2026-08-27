@@ -24,7 +24,9 @@ import {
   type PermissionProfileId,
   type SessionPermissionProfileState
 } from '../../../../shared/permission-profiles'
+import type { MessagePdfContextSnapshot } from '../../../../shared/session-persistence'
 import { useSessionStore, type ChatSession } from '../../stores/session-store'
+import { usePreviewWorkbenchStore } from '../../stores/preview-workbench-store'
 import { selectVisionRelayAvailable, useSettingsStore } from '../../stores/settings-store'
 import { useAcpRuntime } from './useAcpRuntime'
 import {
@@ -52,6 +54,7 @@ import {
 } from './workspace-runtime-command-owner'
 import { createWorkspaceRuntimeSessionLifecycleOwner } from './workspace-runtime-session-lifecycle-owner'
 import { useSubagentRuntimePresentation } from './workspace-subagent-runtime-presentation'
+import { createPreviewFileItemFromPdfContext } from '../../pages/workspace/preview-file-item'
 import {
   createPermissionResponseAttemptOwner,
   pendingWorkspacePermissions
@@ -69,6 +72,18 @@ type WorkspacePermissionProfileRuntime = Pick<
 type SubagentRuntimeListener = (update: AcpAgentRuntimeUpdate) => void
 const getErrorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
+export const revealLinkedPdfContext = (
+  projectId: string,
+  pdfContext: MessagePdfContextSnapshot
+): void => {
+  const binding =
+    pdfContext.bindings.find(({ bindingId }) => bindingId === pdfContext.activeBindingId) ??
+    pdfContext.bindings[0]
+  if (!binding) return
+  usePreviewWorkbenchStore
+    .getState()
+    .upsertAndActivateItem(createPreviewFileItemFromPdfContext(binding, projectId))
+}
 const setWorkspacePermissionProfile = async (
   runtime: WorkspacePermissionProfileRuntime,
   sessionId: string,
@@ -332,7 +347,22 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
         {
           onSendPreparationStateChange: handleSendPreparationStateChange,
           drainRuntimeEvents,
-          onSessionBound: (_pendingSessionId, sessionId) => rememberAdmittedTarget(sessionId)
+          onSessionBound: (_pendingSessionId, sessionId) => {
+            rememberAdmittedTarget(sessionId)
+            if (
+              resolvedInput.projectId &&
+              (resolvedInput.pendingPdfContextAttachmentIds?.length ||
+                resolvedInput.pendingPdfContextVersions?.length)
+            ) {
+              usePreviewWorkbenchStore
+                .getState()
+                .setPendingPdfContext(resolvedInput.projectId, undefined)
+            }
+          },
+          onPdfContextLinked: (_sessionId, pdfContext) => {
+            if (!resolvedInput.projectId) return
+            revealLinkedPdfContext(resolvedInput.projectId, pdfContext)
+          }
         }
       )
     },

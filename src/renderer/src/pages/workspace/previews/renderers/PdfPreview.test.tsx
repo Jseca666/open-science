@@ -8,6 +8,8 @@ import { PdfPreviewContent } from './PdfPreview'
 
 vi.mock('../managed-pdf-document', () => ({ createManagedPdfLoadingTask: vi.fn() }))
 
+;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+
 describe('PdfPreviewContent', () => {
   let container: HTMLDivElement
   let root: Root
@@ -53,6 +55,7 @@ describe('PdfPreviewContent', () => {
   afterEach(async () => {
     await act(async () => root?.unmount())
     container.remove()
+    vi.useRealTimers()
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
   })
@@ -90,6 +93,68 @@ describe('PdfPreviewContent', () => {
     expect(destroyDocument.mock.invocationCallOrder[0]).toBeLessThan(
       vi.mocked(window.api.previewResources.release).mock.invocationCallOrder[0] as number
     )
+  })
+
+  it('reports the page nearest the viewport center after scrolling settles', async () => {
+    vi.useFakeTimers()
+    const onReadingPositionChange = vi.fn()
+    vi.mocked(createManagedPdfLoadingTask).mockReturnValue({
+      promise: Promise.resolve({
+        numPages: 3,
+        getPage,
+        destroy: destroyDocument
+      }),
+      destroy: vi.fn().mockResolvedValue(undefined)
+    } as never)
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback): number => {
+      callback(0)
+      return 1
+    })
+
+    await act(async () => {
+      root.render(
+        <PdfPreviewContent
+          path="/workspace/reading.pdf"
+          name="reading.pdf"
+          source="artifact"
+          onReadingPositionChange={onReadingPositionChange}
+        />
+      )
+    })
+    await vi.waitFor(() =>
+      expect(container.querySelectorAll<HTMLElement>('[data-page-number]')).toHaveLength(3)
+    )
+
+    const scroll = container.querySelector<HTMLElement>('[role="region"]')!
+    const pages = Array.from(container.querySelectorAll<HTMLElement>('[data-page-number]'))
+    vi.spyOn(scroll, 'getBoundingClientRect').mockReturnValue({
+      top: 0,
+      bottom: 600,
+      height: 600
+    } as DOMRect)
+    pages.forEach((page, index) => {
+      const top = index * 700 - 700
+      vi.spyOn(page, 'getBoundingClientRect').mockReturnValue({
+        top,
+        bottom: top + 600,
+        height: 600
+      } as DOMRect)
+    })
+
+    onReadingPositionChange.mockClear()
+    act(() => {
+      scroll.dispatchEvent(new Event('scroll'))
+      scroll.dispatchEvent(new Event('scroll'))
+      scroll.dispatchEvent(new Event('scroll'))
+    })
+
+    expect(onReadingPositionChange).not.toHaveBeenCalled()
+    await act(async () => vi.advanceTimersByTimeAsync(1_199))
+    expect(onReadingPositionChange).not.toHaveBeenCalled()
+    await act(async () => vi.advanceTimersByTimeAsync(1))
+
+    expect(onReadingPositionChange).toHaveBeenCalledOnce()
+    expect(onReadingPositionChange).toHaveBeenCalledWith({ pageNumber: 2, pageCount: 3 })
   })
 
   it('uses each PDF page aspect ratio instead of stretching it into a fixed frame', async () => {

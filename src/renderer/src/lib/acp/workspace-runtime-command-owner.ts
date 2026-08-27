@@ -1,11 +1,16 @@
 import type { AcpMessageImage, AcpRuntimeEvent } from '../../../../shared/acp'
 import type { FileReference } from '../../../../shared/artifacts'
 import * as annotationProtocol from '../../../../shared/annotations'
+import { withPdfContext as withPdf } from '../../../../shared/session-pdf-context'
 import type { ActivePlanProjection } from '../../../../shared/session-plan/contract'
 import {
   collectSessionReferences,
+  type MessagePdfContextSnapshot,
   type MessagePart,
   type PersistedMessageAgentTarget,
+  type PdfReadingPosition,
+  type SessionPdfContextSource,
+  type SessionRuntimeContext,
   type SessionReference
 } from '../../../../shared/session-persistence'
 import type { AgentFrameworkId, SessionAgentConfiguration } from '../../../../shared/settings'
@@ -56,6 +61,10 @@ type SendWorkspaceMessageIntent = {
   permissionProfile?: PermissionProfileId
   forcedSkillIds?: string[]
   referencedArtifacts?: FileReference[]
+  pdfContext?: MessagePdfContextSnapshot
+  pdfReadingPosition?: PdfReadingPosition
+  pendingPdfContextAttachmentIds?: string[]
+  pendingPdfContextVersions?: SessionPdfContextSource[]
   parts?: MessagePart[]
   specialistId?: string | null
   enabledComputeHosts?: string[]
@@ -81,6 +90,7 @@ type WorkspaceCommandLifecycle = {
   onSendPreparationStateChange?: (sessionId: string, inFlight: boolean) => void
   drainRuntimeEvents?: (sessionId?: string) => Promise<void>
   onSessionBound?: (pendingSessionId: string, sessionId: string) => void
+  onPdfContextLinked?: (sessionId: string, pdfContext: MessagePdfContextSnapshot) => void
 }
 type ResendEditedMessageInput = {
   text: string
@@ -108,7 +118,6 @@ type HistoryReplayContext = {
   historyAttachments?: UploadedAttachment[]
   historyImages?: AcpMessageImage[]
 }
-
 const errorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
 
@@ -270,16 +279,128 @@ type PendingPromptRequest = SendWorkspaceMessageCommand & {
   contextReset?: boolean
 }
 
+const linkPdfContextForSend = async ({
+  sessionId,
+  messageId,
+  projectId,
+  sources,
+  pdfReadingPosition,
+  excludeSinglePage = false,
+  persistSessionBeforeLink = false
+}: {
+  sessionId: string
+  messageId?: string
+  projectId: string | undefined
+  sources: SessionPdfContextSource[]
+  pdfReadingPosition?: PdfReadingPosition
+  excludeSinglePage?: boolean
+  persistSessionBeforeLink?: boolean
+}): Promise<MessagePdfContextSnapshot | undefined> => {
+  if (!projectId) throw new Error('The PDF Project is unavailable for Session context.')
+  let source = useSessionStore.getState().sessions.find((candidate) => candidate.id === sessionId)
+  if (!source) throw new Error(`Session not found: ${sessionId}`)
+  let expectedRevision = source.runtimeContext?.revision ?? 0
+
+  // A new Agent Session is bound in memory before its first durable save. Materialize that Session
+  // before asking Main's PDF-context owner to patch its runtime context.
+  if (persistSessionBeforeLink) {
+    const durable = await saveSessionInOrder(toPersistedSession(source))
+    expectedRevision = durable.runtimeContext?.revision ?? 0
+  }
+
+  const runtimeContext: SessionRuntimeContext = await window.api.sessions.linkPdfContext({
+    projectId,
+    sessionId,
+    expectedRevision,
+    sources,
+    ...(excludeSinglePage ? { excludeSinglePage: true } : {})
+  })
+  const pdfContext = runtimeContext.pdfContext
+  const activeBinding = sources
+    .map(({ sourceKind, sourceVersionId }) =>
+      pdfContext?.bindings.find(
+        (binding) =>
+          binding.sourceKind === sourceKind && binding.sourceVersionId === sourceVersionId
+      )
+    )
+    .find((binding) => binding !== undefined)
+  const messagePdfContext: MessagePdfContextSnapshot | undefined = pdfContext
+    ? {
+        ...pdfContext,
+        ...(activeBinding ? { activeBindingId: activeBinding.bindingId } : {}),
+        ...(activeBinding && pdfReadingPosition ? { readingPosition: pdfReadingPosition } : {})
+      }
+    : undefined
+
+  source = useSessionStore.getState().sessions.find((candidate) => candidate.id === sessionId)
+  if (!source) throw new Error(`Session not found: ${sessionId}`)
+  useSessionStore.getState().applyDurableSessionProjection({
+    source,
+    session: {
+      ...toPersistedSession(source),
+      runtimeContext,
+      updatedAt: Math.max(source.updatedAt, Date.now())
+    },
+    mode: 'runtime-context-authority'
+  })
+  if (messageId && messagePdfContext) {
+    useSessionStore.getState().replaceMessagePdfContext({
+      sessionId,
+      messageId,
+      pdfContext: messagePdfContext
+    })
+    const linked = useSessionStore
+      .getState()
+      .sessions.find((candidate) => candidate.id === sessionId)
+    if (linked) await saveSessionInOrder(toPersistedSession(linked))
+  }
+  return messagePdfContext
+}
+
+const linkFinalizedPdfContext = async ({
+  attachmentIds,
+  attachments,
+  ...input
+}: {
+  sessionId: string
+  messageId?: string
+  projectId: string | undefined
+  attachmentIds: string[]
+  attachments: UploadedAttachment[]
+  persistSessionBeforeLink?: boolean
+  pdfReadingPosition?: PdfReadingPosition
+}): Promise<MessagePdfContextSnapshot | undefined> => {
+  const selected = attachmentIds.map((attachmentId) =>
+    attachments.find((candidate) => candidate.id === attachmentId)
+  )
+  if (selected.some((attachment) => !attachment?.versionId)) {
+    throw new Error('The staged PDF could not be finalized for Session context.')
+  }
+  return linkPdfContextForSend({
+    ...input,
+    sources: selected.map((attachment) => ({
+      sourceKind: 'upload-version',
+      sourceVersionId: attachment!.versionId!
+    })),
+    excludeSinglePage: true
+  })
+}
+
 const startPendingPrompt = (
   runtime: WorkspaceCommandRuntime,
   request: PendingPromptRequest,
-  onSessionBound?: (pendingSessionId: string, sessionId: string) => void
+  onSessionBound?: (pendingSessionId: string, sessionId: string) => void,
+  onPdfContextLinked?: (sessionId: string, pdfContext: MessagePdfContextSnapshot) => void
 ): void => {
   void (async () => {
     const pending = request.pending
     if (!ownsPrompt(pending.sessionId, pending.messageId)) return
     let created
     try {
+      const literatureContext =
+        request.pdfContext !== undefined ||
+        request.pendingPdfContextAttachmentIds !== undefined ||
+        request.pendingPdfContextVersions !== undefined
       const target =
         request.agentFrameworkId && request.agentConfiguration
           ? { frameworkId: request.agentFrameworkId, ...request.agentConfiguration }
@@ -291,7 +412,8 @@ const startPendingPrompt = (
             request.permissionProfile,
             request.specialistId ?? undefined,
             target,
-            request.memoryEnabled !== false
+            request.memoryEnabled !== false,
+            literatureContext ? true : undefined
           )
         : await runtime.createSession(
             request.cwd,
@@ -299,7 +421,8 @@ const startPendingPrompt = (
             request.permissionProfile,
             request.specialistId ?? undefined,
             undefined,
-            request.memoryEnabled !== false
+            request.memoryEnabled !== false,
+            literatureContext ? true : undefined
           )
     } catch (error) {
       if (ownsPrompt(pending.sessionId, pending.messageId)) {
@@ -333,6 +456,7 @@ const startPendingPrompt = (
     if (!boundMessageId || !ownsPrompt(created.sessionId, boundMessageId)) return
 
     let attachments = request.attachments
+    let pdfContext = request.pdfContext
     try {
       attachments = await finalizeWorkspaceAttachments({
         sessionId: created.sessionId,
@@ -344,6 +468,35 @@ const startPendingPrompt = (
         messageId: boundMessageId,
         uploads: attachments.map(toPersistedUploadedAttachment)
       })
+      if (request.pendingPdfContextAttachmentIds?.length) {
+        pdfContext = await linkFinalizedPdfContext({
+          sessionId: created.sessionId,
+          messageId: boundMessageId,
+          projectId: request.projectId,
+          attachmentIds: request.pendingPdfContextAttachmentIds,
+          attachments,
+          pdfReadingPosition: request.pdfReadingPosition,
+          persistSessionBeforeLink: true
+        })
+      }
+      if (request.pendingPdfContextVersions?.length) {
+        pdfContext = await linkPdfContextForSend({
+          sessionId: created.sessionId,
+          messageId: boundMessageId,
+          projectId: request.projectId,
+          sources: request.pendingPdfContextVersions,
+          pdfReadingPosition: request.pdfReadingPosition,
+          excludeSinglePage: true,
+          persistSessionBeforeLink: true
+        })
+      }
+      if (
+        pdfContext &&
+        (request.pendingPdfContextAttachmentIds?.length ||
+          request.pendingPdfContextVersions?.length)
+      ) {
+        onPdfContextLinked?.(created.sessionId, pdfContext)
+      }
     } catch (error) {
       useSessionStore.getState().failRun(created.sessionId, errorMessage(error))
       return
@@ -383,7 +536,7 @@ const startPendingPrompt = (
       annotations: request.annotations,
       attachments,
       forcedSkillIds: request.forcedSkillIds,
-      referencedArtifacts: request.referencedArtifacts,
+      referencedArtifacts: withPdf(request.projectId, request.referencedArtifacts, pdfContext),
       referencedSessions: collectSessionReferences(request.parts),
       replay: { ...request.replay, contextReset: Boolean(request.contextReset) },
       turnIntent: request.turnIntent,
@@ -416,6 +569,16 @@ const sendWorkspaceMessage = async (
   const replayPrompt = replaySession?.pendingContextReplayMessageId
     ? replaySession.messages.find((item) => item.id === replaySession.pendingContextReplayMessageId)
     : undefined
+  let pdfContext = replayPrompt
+    ? replayPrompt.pdfContext
+    : input.pdfContext && input.pdfReadingPosition
+      ? {
+          ...input.pdfContext,
+          activeBindingId:
+            input.pdfContext.activeBindingId ?? input.pdfContext.bindings[0]?.bindingId,
+          readingPosition: input.pdfReadingPosition
+        }
+      : input.pdfContext
   const attachments = input.attachments ?? []
   const annotations = input.annotations ?? []
   if (annotationProtocol.validateAnnotations(annotations, content)) return undefined
@@ -479,6 +642,15 @@ const sendWorkspaceMessage = async (
       runtime,
       {
         ...input,
+        pdfContext: undefined,
+        ...(pdfContext
+          ? {
+              pendingPdfContextVersions: pdfContext.bindings.map(
+                ({ sourceKind, sourceVersionId }) => ({ sourceKind, sourceVersionId })
+              ),
+              pdfReadingPosition: pdfContext.readingPosition
+            }
+          : {}),
         pending: pendingPrompt,
         content,
         attachments,
@@ -489,7 +661,8 @@ const sendWorkspaceMessage = async (
         replay,
         contextReset: true
       },
-      lifecycle.onSessionBound
+      lifecycle.onSessionBound,
+      lifecycle.onPdfContextLinked
     )
     return pendingPrompt
   }
@@ -523,6 +696,7 @@ const sendWorkspaceMessage = async (
         attachments: effectiveAttachments,
         annotations,
         parts: input.parts,
+        pdfContext,
         turnIntent: input.turnIntent,
         cwd,
         projectId: input.projectId ?? session.projectId,
@@ -538,6 +712,7 @@ const sendWorkspaceMessage = async (
         runtime,
         {
           ...input,
+          pdfContext,
           pending: appended,
           content,
           attachments: effectiveAttachments,
@@ -548,7 +723,8 @@ const sendWorkspaceMessage = async (
           replay,
           contextReset: Boolean(session.pendingContextReplayMessageId)
         },
-        lifecycle.onSessionBound
+        lifecycle.onSessionBound,
+        lifecycle.onPdfContextLinked
       )
       return appended
     }
@@ -585,6 +761,30 @@ const sendWorkspaceMessage = async (
         projectId,
         preserveSourceOwnership: Boolean(input.truncateFromMessageId)
       })
+      if (input.pendingPdfContextAttachmentIds?.length) {
+        pdfContext = await linkFinalizedPdfContext({
+          sessionId,
+          projectId,
+          attachmentIds: input.pendingPdfContextAttachmentIds,
+          attachments: promptAttachments,
+          pdfReadingPosition: input.pdfReadingPosition
+        })
+      }
+      if (input.pendingPdfContextVersions?.length) {
+        pdfContext = await linkPdfContextForSend({
+          sessionId,
+          projectId,
+          sources: input.pendingPdfContextVersions,
+          pdfReadingPosition: input.pdfReadingPosition,
+          excludeSinglePage: true
+        })
+      }
+      if (
+        pdfContext &&
+        (input.pendingPdfContextAttachmentIds?.length || input.pendingPdfContextVersions?.length)
+      ) {
+        lifecycle.onPdfContextLinked?.(sessionId, pdfContext)
+      }
     } catch (error) {
       useSessionStore.getState().failRun(sessionId, errorMessage(error))
       return undefined
@@ -606,6 +806,7 @@ const sendWorkspaceMessage = async (
       attachments: promptAttachments,
       annotations,
       parts: input.parts,
+      pdfContext,
       turnIntent: input.turnIntent,
       cwd: input.cwd,
       projectId: input.projectId ?? prepared.appendOwnership.projectId,
@@ -648,7 +849,7 @@ const sendWorkspaceMessage = async (
       annotations,
       attachments: promptMedia?.currentAttachments ?? promptAttachments,
       forcedSkillIds: input.forcedSkillIds,
-      referencedArtifacts: input.referencedArtifacts,
+      referencedArtifacts: withPdf(projectId, input.referencedArtifacts, pdfContext),
       referencedSessions: collectSessionReferences(input.parts),
       replay: promptMedia
         ? { ...replay, historyAttachments: promptMedia.historyAttachments }
@@ -665,6 +866,7 @@ const sendWorkspaceMessage = async (
     attachments,
     annotations,
     parts: input.parts,
+    pdfContext,
     turnIntent: input.turnIntent,
     cwd: input.cwd,
     projectId: input.projectId,
@@ -684,6 +886,7 @@ const sendWorkspaceMessage = async (
     runtime,
     {
       ...input,
+      pdfContext,
       pending,
       content,
       attachments,
@@ -693,7 +896,8 @@ const sendWorkspaceMessage = async (
       specialistId: input.specialistId ?? undefined,
       turnIntent: input.turnIntent
     },
-    lifecycle.onSessionBound
+    lifecycle.onSessionBound,
+    lifecycle.onPdfContextLinked
   )
   return pending
 }
@@ -738,6 +942,7 @@ const resendEditedWorkspaceMessage = async (
         permissionProfile: session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
         forcedSkillIds: input.forcedSkillIds,
         referencedArtifacts: input.referencedArtifacts,
+        pdfContext: sourceMessage.pdfContext,
         agentFrameworkId: options.agentFrameworkId,
         agentBackendId: options.agentBackendId,
         agentModel: options.agentModel,

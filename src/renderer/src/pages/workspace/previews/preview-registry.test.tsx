@@ -41,4 +41,15 @@ describe('preview registry Office routing', () => {
 
     expect(rendered?.type).toBe(PlanJsonPreview)
   })
+
+  it('forwards the PDF reading-position observer to the PDF renderer', () => {
+    const onPdfReadingPositionChange = vi.fn()
+
+    const rendered = renderPreviewFile({
+      item: createItem('pdf'),
+      onPdfReadingPositionChange
+    })
+
+    expect(rendered?.props.onPdfReadingPositionChange).toBe(onPdfReadingPositionChange)
+  })
 })

@@ -416,7 +416,7 @@ const useWorkspaceConversationController = (
         return
       }
 
-      const snapshot = composer.lifecycle.captureSend()
+      const snapshot = composer.lifecycle.captureSend(!branchInNewSession)
       if (inFlightDraftKeysRef.current.has(snapshot.draftKey)) return
       inFlightDraftKeysRef.current.add(snapshot.draftKey)
 
@@ -441,6 +441,7 @@ const useWorkspaceConversationController = (
               uploads: snapshot.attachments,
               annotations: snapshot.annotations,
               parts: docToMessageParts(snapshot.doc),
+              pdfContext: snapshot.pdfContext,
               createdAt: 0,
               updatedAt: 0
             }
@@ -459,6 +460,10 @@ const useWorkspaceConversationController = (
             annotations: snapshot.annotations,
             referencedArtifacts: docToArtifactRefs(snapshot.doc),
             parts: docToMessageParts(snapshot.doc),
+            pdfContext: snapshot.pdfContext,
+            pdfReadingPosition: snapshot.pdfReadingPosition,
+            pendingPdfContextAttachmentIds: snapshot.pendingPdfContextAttachmentIds,
+            pendingPdfContextVersions: snapshot.pendingPdfContextVersions,
             cwd: activeSession?.cwd,
             projectId: activeSession?.projectId ?? current.projectId,
             permissionProfile: current.permissionProfile,

@@ -25,6 +25,7 @@ const FIT_PAGE_WIDTH = 768
 const MIN_ZOOM = 0.5
 const MAX_ZOOM = 3
 const ZOOM_BUTTON_STEP = 0.25
+const READING_POSITION_SETTLE_MS = 1_200
 // Wheel zoom is proportional to accumulated deltaY so one trackpad/pinch gesture (many small
 // events) maps to a controlled amount rather than a full step per event. ~100px notch ≈ 0.25.
 const ZOOM_WHEEL_SENSITIVITY = 0.0025
@@ -269,7 +270,8 @@ export const PdfPreviewContent = ({
   sessionId,
   mimeType,
   size,
-  mtimeMs
+  mtimeMs,
+  onReadingPositionChange
 }: {
   path: string
   name: string
@@ -279,6 +281,7 @@ export const PdfPreviewContent = ({
   mimeType?: string
   size?: number
   mtimeMs?: number
+  onReadingPositionChange?: PreviewFileRendererProps['onPdfReadingPositionChange']
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const requestKey = createPreviewResourceKey({
@@ -434,6 +437,51 @@ export const PdfPreviewContent = ({
 
   const currentDocumentState = documentState?.requestKey === requestKey ? documentState : null
   const hasError = currentDocumentState?.status === 'error'
+  const document = currentDocumentState?.status === 'ready' ? currentDocumentState.document : null
+  const pageCount = document?.numPages ?? 0
+  const pageWidth = fitWidth > 0 ? Math.round(fitWidth * zoom) : 0
+
+  useLayoutEffect(() => {
+    const scroll = scrollRef.current
+    if (!scroll || pageCount === 0 || !onReadingPositionChange) return
+
+    let settleTimer: ReturnType<typeof setTimeout> | undefined
+    const report = (): void => {
+      settleTimer = undefined
+      const viewport = scroll.getBoundingClientRect()
+      const center = (viewport.top + viewport.bottom) / 2
+      let nearestPage = 1
+      let nearestDistance = Number.POSITIVE_INFINITY
+      for (const page of scroll.querySelectorAll<HTMLElement>('[data-page-number]')) {
+        const bounds = page.getBoundingClientRect()
+        const distance =
+          center < bounds.top
+            ? bounds.top - center
+            : center > bounds.bottom
+              ? center - bounds.bottom
+              : 0
+        if (distance >= nearestDistance) continue
+        nearestDistance = distance
+        nearestPage = Number(page.dataset.pageNumber) || 1
+      }
+      onReadingPositionChange({ pageNumber: nearestPage, pageCount })
+    }
+    const schedule = (): void => {
+      if (settleTimer !== undefined) clearTimeout(settleTimer)
+      settleTimer = setTimeout(report, READING_POSITION_SETTLE_MS)
+    }
+
+    scroll.addEventListener('scroll', schedule, { passive: true })
+    const resizeObserver =
+      typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(schedule)
+    resizeObserver?.observe(scroll)
+    schedule()
+    return () => {
+      scroll.removeEventListener('scroll', schedule)
+      resizeObserver?.disconnect()
+      if (settleTimer !== undefined) clearTimeout(settleTimer)
+    }
+  }, [onReadingPositionChange, pageCount, pageWidth])
 
   if (hasError) {
     return (
@@ -445,9 +493,6 @@ export const PdfPreviewContent = ({
     )
   }
 
-  const document = currentDocumentState?.status === 'ready' ? currentDocumentState.document : null
-  const pageCount = document?.numPages ?? 0
-  const pageWidth = fitWidth > 0 ? Math.round(fitWidth * zoom) : 0
   const zoomBy = (delta: number): void => setZoom((current) => clampZoom(current + delta))
 
   return (
@@ -504,7 +549,10 @@ export const PdfPreviewContent = ({
   )
 }
 
-export const PdfPreviewRenderer = ({ item }: PreviewFileRendererProps): React.JSX.Element => (
+export const PdfPreviewRenderer = ({
+  item,
+  onPdfReadingPositionChange
+}: PreviewFileRendererProps): React.JSX.Element => (
   <PdfPreviewContent
     path={item.path}
     name={item.name}
@@ -514,5 +562,6 @@ export const PdfPreviewRenderer = ({ item }: PreviewFileRendererProps): React.JS
     mimeType={item.mimeType}
     size={item.size}
     mtimeMs={item.mtimeMs}
+    onReadingPositionChange={onPdfReadingPositionChange}
   />
 )

@@ -99,6 +99,8 @@ const dispatchQueuedSession = (
             annotations: item.snapshot.annotations,
             referencedArtifacts: docToArtifactRefs(item.snapshot.doc),
             parts: docToMessageParts(item.snapshot.doc),
+            pdfContext: item.snapshot.pdfContext,
+            pdfReadingPosition: item.snapshot.pdfReadingPosition,
             cwd: item.cwd,
             projectId: item.projectId,
             permissionProfile: item.permissionProfile,
@@ -232,7 +234,8 @@ const sendQueuedItemNow = async (
       hasPayload &&
       !item.revisionMessageId &&
       current.runtime.steerFollowUp &&
-      !item.snapshot.annotations?.length
+      !item.snapshot.annotations?.length &&
+      !item.snapshot.pdfContext
     ) {
       owner.replaceItem(sessionId, itemId, {
         phase: 'sending',

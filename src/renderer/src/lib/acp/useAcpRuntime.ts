@@ -64,7 +64,8 @@ const useAcpRuntime = (): {
     permissionProfile?: PermissionProfileId,
     specialistId?: string,
     agentTarget?: AcpSessionAgentTarget,
-    memoryEnabled?: boolean
+    memoryEnabled?: boolean,
+    literatureContext?: true
   ) => Promise<AcpCreateSessionResponse>
   resumeSession: (
     sessionId: AcpResumeSessionRequest['sessionId'],
@@ -284,7 +285,8 @@ const useAcpRuntime = (): {
       permissionProfile?: PermissionProfileId,
       specialistId?: string,
       agentTarget?: AcpSessionAgentTarget,
-      memoryEnabled = true
+      memoryEnabled = true,
+      literatureContext?: true
     ) =>
       runValueAction(setIsConnecting, () =>
         window.api.acp.createSession({
@@ -293,6 +295,7 @@ const useAcpRuntime = (): {
           permissionProfile,
           memoryEnabled,
           specialistId,
+          ...(literatureContext ? { literatureContext } : {}),
           ...(agentTarget ? { agentTarget } : {})
         })
       ),

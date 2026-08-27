@@ -75,6 +75,7 @@ import { AgentComputeService } from './compute/agent-compute-service'
 import { createSessionCatalogHydration } from './compute/session-catalog-hydration'
 import { SessionEnabledComputeHostsOwner } from './compute/session-enabled-hosts-owner'
 import { createComputeJobRuntime } from './compute/job-runtime'
+import { LiteratureEvidenceRepository } from './literature/evidence-repository'
 import { waitForInitialConnectorRefresh } from './connector-reload'
 import { createConnectorApplicationModule } from './connectors/application'
 import { isCustomMcpServerRouteSafe } from './connectors/custom-mcp-bootstrap'
@@ -211,6 +212,8 @@ import { registerSideChatIpcHandlers } from './side-chat/ipc'
 import { SideChatRuntimeOwner } from './side-chat/runtime-owner'
 import { type SessionPersistenceBackend } from './session-persistence/ipc'
 import { MainMessageAttributionAuthority } from './session-persistence/message-attribution-authority'
+import { SessionPdfContextOwner } from './session-persistence/pdf-context-owner'
+import { LiteratureDocumentReader } from './literature/document-reader'
 import { SessionDeletionOwner } from './session-deletion/owner'
 import { buildSessionDetailsUserPrompt, createSessionDetailsOwner } from './session-details/owner'
 import { tryDecryptKey } from './settings/crypto'
@@ -767,6 +770,15 @@ const createApplicationModules = async (
       })
     }
   )
+  const sessionPdfContextOwner = new SessionPdfContextOwner({
+    inputs: immutableInputAuthority,
+    sessions: sessionPersistenceCoordinator
+  })
+  const literatureDocumentReader = new LiteratureDocumentReader({
+    storageRoot: resolveStorageRoot(),
+    inputs: immutableInputAuthority,
+    sessions: sessionPersistenceCoordinator
+  })
   const sideChatRelay = new SideChatRelayOwner({
     targetState: (parentSessionId) => {
       const runtime = runtimeRef.current
@@ -888,6 +900,9 @@ const createApplicationModules = async (
   const visionEvidenceRepository = new VisionEvidenceRepository(() =>
     getProjectDbClient(configRoot)
   )
+  const literatureEvidenceRepository = new LiteratureEvidenceRepository(() =>
+    getProjectDbClient(configRoot)
+  )
   bindNotificationInboxDeletionRuntime({
     inbox: notificationInbox,
     sessionPersistenceCoordinator,
@@ -895,10 +910,16 @@ const createApplicationModules = async (
       await Promise.all([
         sessionEnabledComputeHostsOwnerRef.current?.clear(sessionIds),
         sideChatOwnerRef.current?.invalidateParents(sessionIds),
-        visionEvidenceRepository.deleteSessions(sessionIds)
+        visionEvidenceRepository.deleteSessions(sessionIds),
+        literatureEvidenceRepository.deleteSessions(sessionIds)
       ])
     },
-    onSessionsReconciled: (sessionIds) => visionEvidenceRepository.reconcileSessions(sessionIds)
+    onSessionsReconciled: async (sessionIds) => {
+      await Promise.all([
+        visionEvidenceRepository.reconcileSessions(sessionIds),
+        literatureEvidenceRepository.reconcileSessions(sessionIds)
+      ])
+    }
   })
   const projectHandlers = createProjectHandlers(projectRepository, projectDeletionCoordinator, {
     updateArchive: (request) => archiveCoordinator.updateProjectArchive(request),
@@ -2219,6 +2240,7 @@ const createApplicationModules = async (
       initializationBarrier: initialConnectorSkillsReady,
       profileService,
       sessionPersistenceCoordinator,
+      literatureReader: literatureDocumentReader,
       delegatedWork: delegatedWork.root,
       sideChatRelays: mainPromptSideChatRelay,
       imageInputCompatibility,
@@ -3361,6 +3383,13 @@ const createApplicationModules = async (
       projects: projectHandlers,
       sessions: {
         ...sessionPersistenceHandlers,
+        filterPdfContextCandidates: (request) => sessionPdfContextOwner.filterCandidates(request),
+        linkPdfContext: async (request) => {
+          const context = await sessionPdfContextOwner.link(request)
+          await runtimeRef.current?.enableLiteratureContext(request.sessionId)
+          return context
+        },
+        unlinkPdfContext: (request) => sessionPdfContextOwner.unlink(request),
         editDetails: (request) => sessionDetailsOwner.edit(request),
         saveSession: async (session, options) => {
           const result = await sessionPersistenceHandlers.saveSession(session, options)

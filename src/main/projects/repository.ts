@@ -19,6 +19,7 @@ type ProjectClient = Pick<
   | 'project'
   | 'projectDeletionIntent'
   | 'projectPreviewState'
+  | 'literatureEvidence'
   | 'visionEvidence'
   | 'memoryEntry'
   | 'memorySettings'
@@ -211,6 +212,7 @@ class ProjectRepository {
         'PRAGMA secure_delete = ON'
       )
       await transaction.projectPreviewState.deleteMany({ where: { projectId: id } })
+      await transaction.literatureEvidence.deleteMany({ where: { projectId: id } })
       await transaction.visionEvidence.deleteMany({ where: { projectId: id } })
       const deletedMemory = await transaction.memoryEntry.deleteMany({ where: { projectId: id } })
       const memoryChange =

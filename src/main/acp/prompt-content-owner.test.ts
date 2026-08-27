@@ -9,9 +9,14 @@ import type { UploadedAttachment } from '../../shared/uploads'
 import { estimateHistoryTokens } from '../../shared/history-preamble'
 import { UploadRepository } from '../uploads/repository'
 import { stageUploadFixtures } from '../uploads/repository.test-utils'
-import { MAX_AUTO_PROCESS_IMAGE_BYTES } from '../uploads/attachment-media'
+import { extractPdfText, MAX_AUTO_PROCESS_IMAGE_BYTES } from '../uploads/attachment-media'
 import { createManagedFileReferenceResolver } from './file-reference-resolver'
 import { AcpPromptContentOwner } from './prompt-content-owner'
+
+vi.mock('../uploads/attachment-media', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../uploads/attachment-media')>()
+  return { ...actual, extractPdfText: vi.fn(actual.extractPdfText) }
+})
 
 const roots: string[] = []
 
@@ -31,6 +36,149 @@ afterEach(async () => {
 })
 
 describe('AcpPromptContentOwner', () => {
+  it('injects the send-time PDF page snapshot instead of a document-prefix preview', async () => {
+    const root = await createRoot()
+    const sourcePath = join(root, 'paper.pdf')
+    await writeFile(sourcePath, '%PDF-1.4 fake')
+    vi.mocked(extractPdfText).mockResolvedValueOnce({
+      text: '--- Page 1 ---\nFirst page\n\n--- Page 2 ---\nVisible page\n\n--- Page 3 ---\nLast page',
+      pageCount: 3,
+      truncated: false
+    })
+    const resolver = createManagedFileReferenceResolver({})
+    vi.spyOn(resolver, 'resolve').mockResolvedValue({
+      absolutePath: sourcePath,
+      uri: pathToFileURL(sourcePath).href,
+      name: 'paper.pdf',
+      mimeType: 'application/pdf',
+      size: 14,
+      allowSkillImportReference: false
+    })
+    const owner = new AcpPromptContentOwner({ fileReferenceResolver: resolver })
+
+    const prepared = await owner.prepare({
+      appSessionId: 'session-1',
+      projectId: 'project-1',
+      text: '我在看第几页？',
+      historyImages: [],
+      historyUploads: [],
+      currentUploads: [],
+      references: [
+        {
+          id: 'artifact-1',
+          name: 'paper.pdf',
+          source: 'artifact',
+          path: 'artifact-version:project-1/source-session/artifact-1/version-1',
+          versionId: 'version-1',
+          mimeType: 'application/pdf',
+          pdfReadingPosition: { pageNumber: 2, pageCount: 3 }
+        }
+      ],
+      codexSkillInputs: [],
+      skillImportEnabled: false
+    })
+
+    const pdf = contentBlocks(prepared.content).find((block) => block.type === 'resource')
+    expect(extractPdfText).toHaveBeenCalledWith(sourcePath, 2)
+    expect(pdf).toMatchObject({
+      type: 'resource',
+      resource: {
+        text: expect.stringContaining('"pageNumber":2,"pageCount":3,"capturedAtSend":true')
+      }
+    })
+    if (pdf?.type === 'resource' && 'text' in pdf.resource) {
+      expect(pdf.resource.text).toContain('--- Page 2 ---\nVisible page')
+      expect(pdf.resource.text).not.toContain('First page')
+      expect(pdf.resource.text).not.toContain('Last page')
+    }
+  })
+
+  it('uses document context for a document-wide question despite a visible PDF page', async () => {
+    const root = await createRoot()
+    const sourcePath = join(root, 'paper.pdf')
+    await writeFile(sourcePath, '%PDF-1.4 fake')
+    const extractedDocument = {
+      text: '--- Page 1 ---\nFirst page\n\n--- Page 2 ---\nSecond page\n\n--- Page 3 ---\nLast page',
+      pageCount: 3,
+      truncated: false
+    }
+    vi.mocked(extractPdfText).mockResolvedValue(extractedDocument)
+    const resolver = createManagedFileReferenceResolver({})
+    vi.spyOn(resolver, 'resolve').mockResolvedValue({
+      absolutePath: sourcePath,
+      uri: pathToFileURL(sourcePath).href,
+      name: 'paper.pdf',
+      mimeType: 'application/pdf',
+      size: 14,
+      allowSkillImportReference: false
+    })
+    const owner = new AcpPromptContentOwner({ fileReferenceResolver: resolver })
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined)
+    const extractionCallStart = vi.mocked(extractPdfText).mock.calls.length
+    const prepare = (text: string): ReturnType<AcpPromptContentOwner['prepare']> =>
+      owner.prepare({
+        appSessionId: 'session-1',
+        projectId: 'project-1',
+        text,
+        historyImages: [],
+        historyUploads: [],
+        currentUploads: [],
+        references: [
+          {
+            id: 'artifact-1',
+            name: 'paper.pdf',
+            source: 'artifact',
+            path: 'artifact-version:project-1/source-session/artifact-1/version-1',
+            versionId: 'version-1',
+            mimeType: 'application/pdf',
+            pdfContextDocumentId: 'binding-1',
+            pdfContextDocumentCount: 1,
+            pdfContextActive: true,
+            pdfReadingPosition: { pageNumber: 2, pageCount: 3 }
+          }
+        ],
+        codexSkillInputs: [],
+        skillImportEnabled: false
+      })
+
+    try {
+      const prepared = await prepare('总结一下整篇论文的核心贡献。')
+      await prepare('这个方法有哪些局限？')
+
+      expect(vi.mocked(extractPdfText).mock.calls.slice(extractionCallStart)).toEqual([])
+      const pdf = contentBlocks(prepared.content).find(
+        (block) => block.type === 'text' && block.text.includes('route":"literature-mcp')
+      )
+      expect(pdf).toMatchObject({
+        type: 'text',
+        text: expect.stringContaining('route":"literature-mcp')
+      })
+      expect(pdf).toMatchObject({
+        type: 'text',
+        text: expect.stringContaining('`read_document`')
+      })
+      expect(info.mock.calls.map(([, fields]) => fields)).toEqual([
+        expect.objectContaining({
+          retrievalMode: 'literature-tool',
+          scope: 'full-document',
+          routingReason: 'intent-full-document',
+          fullDocumentInjected: false,
+          bm25Status: 'not-requested'
+        }),
+        expect.objectContaining({
+          retrievalMode: 'literature-tool',
+          scope: 'auto',
+          routingReason: 'intent-auto',
+          fullDocumentInjected: false,
+          bm25Status: 'pending-read-document-query'
+        })
+      ])
+      expect(JSON.stringify(info.mock.calls)).not.toContain('paper.pdf')
+    } finally {
+      info.mockRestore()
+    }
+  })
+
   it('sends a read-only linked file from its disposable snapshot URI', async () => {
     const root = await createRoot()
     const sourcePath = join(root, 'study.csv')

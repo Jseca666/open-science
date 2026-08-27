@@ -128,7 +128,8 @@ describe('application database (integration)', () => {
         '0014_review_query_indexes',
         '0015_session_model_call_usage',
         '0016_compute_job_sensitive_data_encryption',
-        '0017_agent_memory_project_scope'
+        '0017_agent_memory_project_scope',
+        '0018_literature_persistence'
       ]
     })
 
@@ -603,6 +604,8 @@ describe('application database (integration)', () => {
     await client.$executeRawUnsafe('DROP TABLE "ComputeHost"')
     await client.$executeRawUnsafe('DROP TABLE "VisionEvidence"')
     await removeAgentMemoryTriggers(client)
+    await client.$executeRawUnsafe('DROP TABLE "LiteratureEvidence"')
+    await client.$executeRawUnsafe('DROP TABLE "LiteratureExtraction"')
     // Simulate a pre-ledger database: it predates both the migration ledger and Agent Context.
     await client.$executeRawUnsafe('DROP TABLE "_open_science_migrations"')
     await client.$executeRawUnsafe('ALTER TABLE "Project" DROP COLUMN "agentContext"')
@@ -686,6 +689,8 @@ describe('application database (integration)', () => {
     await client.$executeRawUnsafe('DROP TABLE "ComputeHost"')
     await client.$executeRawUnsafe('DROP TABLE "VisionEvidence"')
     await removeAgentMemoryTriggers(client)
+    await client.$executeRawUnsafe('DROP TABLE "LiteratureEvidence"')
+    await client.$executeRawUnsafe('DROP TABLE "LiteratureExtraction"')
     // Simulate a pre-ledger database: it predates both the migration ledger and Agent Context.
     await client.$executeRawUnsafe('DROP TABLE "_open_science_migrations"')
     await client.$executeRawUnsafe('ALTER TABLE "Project" DROP COLUMN "agentContext"')
@@ -1158,7 +1163,8 @@ describe('application database (integration)', () => {
         '0014_review_query_indexes',
         '0015_session_model_call_usage',
         '0016_compute_job_sensitive_data_encryption',
-        '0017_agent_memory_project_scope'
+        '0017_agent_memory_project_scope',
+        '0018_literature_persistence'
       ]
     })
 

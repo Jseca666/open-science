@@ -125,6 +125,34 @@ export type PdfTextResult = {
   truncated: boolean
 }
 
+export const inspectPdfPageCount = async (filePath: string): Promise<number> => {
+  const pdfjs = (await import('pdfjs-dist/legacy/build/pdf.mjs')) as typeof import('pdfjs-dist')
+  const loadingTask = pdfjs.getDocument({
+    url: filePath,
+    disableFontFace: true,
+    isEvalSupported: false,
+    verbosity: 0
+  })
+  const document = await loadingTask.promise
+  try {
+    return document.numPages
+  } finally {
+    await document.destroy()
+  }
+}
+
+const PDF_PAGE_MARKER = /^--- Page (\d+) ---$/gm
+
+export const extractPdfPageText = (text: string, pageNumber: number): string | undefined => {
+  if (!Number.isSafeInteger(pageNumber) || pageNumber < 1) return undefined
+  const matches = [...text.matchAll(PDF_PAGE_MARKER)]
+  const matchIndex = matches.findIndex((match) => Number(match[1]) === pageNumber)
+  if (matchIndex < 0) return undefined
+  const start = matches[matchIndex].index
+  const end = matches[matchIndex + 1]?.index ?? text.length
+  return text.slice(start, end).trim() || undefined
+}
+
 // Accounts for the bytes that will actually be inserted into JSON rather than the decoded image
 // size. Callers can fold this over prepared image blocks before dispatching a multimodal prompt.
 export const consumeInlineImageBudget = (
@@ -551,7 +579,10 @@ const resolvePdfjsAssetUrls = (): { cMapUrl: string; standardFontDataUrl: string
 
 // Extracts selectable text from a PDF so the model receives readable content instead of the raw
 // (base64) file, which would otherwise overflow the request size limit.
-export const extractPdfText = async (filePath: string): Promise<PdfTextResult> => {
+export const extractPdfText = async (
+  filePath: string,
+  targetPageNumber?: number
+): Promise<PdfTextResult> => {
   const fileInfo = await stat(filePath)
   if (fileInfo.size > MAX_AUTO_EXTRACT_PDF_BYTES) {
     throw new Error(
@@ -578,8 +609,14 @@ export const extractPdfText = async (filePath: string): Promise<PdfTextResult> =
     const pageTexts: string[] = []
     let totalChars = 0
     let truncated = false
+    const boundedTargetPage =
+      targetPageNumber !== undefined && Number.isSafeInteger(targetPageNumber)
+        ? Math.min(document.numPages, Math.max(1, targetPageNumber))
+        : undefined
+    const firstPage = boundedTargetPage ?? 1
+    const lastPage = boundedTargetPage ?? document.numPages
 
-    for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
+    for (let pageNumber = firstPage; pageNumber <= lastPage; pageNumber += 1) {
       const page = await document.getPage(pageNumber)
       const content = await page.getTextContent()
       page.cleanup()

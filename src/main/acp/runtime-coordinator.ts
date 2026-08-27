@@ -371,6 +371,13 @@ class AcpRuntimeCoordinator {
     return this.sessionRuntimes.get(sessionId)?.liveSessionProjectId(sessionId)
   }
 
+  async enableLiteratureContext(sessionId: string): Promise<void> {
+    await this.waitForSessionInteractionRelease(sessionId)
+    const runtime = this.sessionRuntimes.get(sessionId)
+    if (!runtime) return
+    await runtime.enableLiteratureContext(sessionId)
+  }
+
   isSessionReferenceAllowed(sessionId: string, referencedSessionId: string): boolean {
     return (
       this.sessionRuntimes

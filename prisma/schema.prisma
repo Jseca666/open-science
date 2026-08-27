@@ -33,6 +33,7 @@ model Project {
   permissionGrants PermissionGrant[]
   previewState     ProjectPreviewState?
   visionEvidence   VisionEvidence[]
+  literatureEvidence LiteratureEvidence[]
   sessions         Session[]
   memoryEntries    MemoryEntry[]
 }
@@ -399,9 +400,71 @@ model UploadVersion {
   uploadFile        UploadFile             @relation(fields: [uploadFileId], references: [id], onDelete: Cascade)
   sourceInputs      ArtifactVersionInput[] @relation("UploadVersionSourceInputs")
   visionEvidence    VisionEvidence[]
+  literatureExtractions LiteratureExtraction[]
+  literatureEvidence    LiteratureEvidence[]
 
   @@unique([uploadFileId, versionNumber])
   @@index([uploadFileId, state, registeredAt])
+}
+
+// Rebuildable PDF text-extraction and full-text-index manifest. Extracted page text and FTS data
+// live outside the authority database; this row records the immutable source and cache integrity.
+model LiteratureExtraction {
+  id                       String @id
+  uploadVersionId          String
+  documentChecksum         String
+  mimeType                 String
+  extractorFingerprint     String
+  extractionSchemaVersion  Int
+  state                    String @default("queued")
+  textOrigin               String?
+  pageCount                Int?
+  characterCount           BigInt?
+  contentStorageKey        String?
+  contentChecksum          String?
+  detectedMetadataJson     String?
+  detectedMetadataChecksum String?
+  indexState               String @default("absent")
+  indexFingerprint         String?
+  indexedChunkCount        Int?
+  errorCode                String?
+  lastAccessedAt           DateTime?
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
+  uploadVersion            UploadVersion @relation(fields: [uploadVersionId], references: [id], onDelete: Cascade)
+  evidence                 LiteratureEvidence[]
+
+  @@unique([uploadVersionId, extractorFingerprint, extractionSchemaVersion])
+  @@index([uploadVersionId, state])
+  @@index([indexState, lastAccessedAt])
+}
+
+// Immutable, bounded PDF passage used by a user selection or Literature MCP retrieval. The quote
+// and checksum survive deletion of rebuildable extraction data or its source Upload Version.
+model LiteratureEvidence {
+  id                    String @id
+  projectId             String
+  sessionId             String
+  sourceMessageId       String
+  uploadVersionId       String?
+  extractionId          String?
+  documentChecksum      String
+  origin                String
+  pageStart             Int
+  pageEnd               Int
+  extractorFingerprint  String
+  evidenceSchemaVersion Int
+  evidenceJson          String
+  evidenceChecksum      String
+  createdAt             DateTime @default(now())
+  project               Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  uploadVersion         UploadVersion? @relation(fields: [uploadVersionId], references: [id], onDelete: SetNull)
+  extraction            LiteratureExtraction? @relation(fields: [extractionId], references: [id], onDelete: SetNull)
+
+  @@index([projectId, sessionId, sourceMessageId])
+  @@index([uploadVersionId])
+  @@index([extractionId])
+  @@index([documentChecksum, pageStart])
 }
 
 // Canonical, reusable image analysis. Session transcripts keep only their existing upload/image

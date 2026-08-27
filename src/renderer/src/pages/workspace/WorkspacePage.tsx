@@ -371,7 +371,7 @@ const WorkspacePage = ({
     pendingCustomizePrefill,
     onCustomizePrefillApplied: sessionController.actions.resetNewConversationSpecialist,
     historyEntries: composerHistoryEntries,
-    hasActiveSession: activeSession !== undefined,
+    activeSession,
     historyPolicy: composerHistoryPolicy,
     canStageAttachments: canEditDraft,
     supportsImageInput,
@@ -391,6 +391,7 @@ const WorkspacePage = ({
     onAnnotationError: (error: Parameters<typeof annotationValidationMessage>[0]) =>
       composer.actions.setError(annotationValidationMessage(error, t))
   }
+
   const sideChat = useSideChatController(
     activeSession ? { sessionId: activeSession.id, projectId: activeSession.projectId } : undefined
   )
@@ -929,6 +930,7 @@ const WorkspacePage = ({
       <WorkspacePanelLayout
         hasPreviewItems={previewItems.length > 0}
         isPreviewPresentationActive={isPreviewPresentationActive}
+        onPdfContextError={setAttachmentError}
         restoredPlanResponder={
           activeSession
             ? {
@@ -1187,13 +1189,11 @@ const WorkspacePage = ({
         session={sessionController.view.dialogs.downloadArtifacts ?? undefined}
         onClose={sessionController.actions.closeDownloadArtifacts}
       />
-
       <ConversationExportDialog
         session={sessionController.view.dialogs.exportConversation ?? undefined}
         currentSession={currentExportConversationSession}
         onClose={sessionController.actions.closeExportConversation}
       />
-
       <DownloadProjectArtifactsDialog
         project={isProjectDownloadOpen ? activeProject : undefined}
         onClose={() => setIsProjectDownloadOpen(false)}
@@ -1208,6 +1208,7 @@ const WorkspacePage = ({
         }
         onClose={closeFileDialog}
         {...previewAnnotations}
+        onPdfContextError={setAttachmentError}
       />
 
       <SessionNotebookDialog

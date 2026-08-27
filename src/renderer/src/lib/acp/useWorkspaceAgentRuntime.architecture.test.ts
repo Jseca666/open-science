@@ -512,6 +512,7 @@ const sendIntentKeys = [
   'permissionProfile',
   'forcedSkillIds',
   'referencedArtifacts',
+  'pdfContext',
   'parts',
   'specialistId',
   'enabledComputeHosts',

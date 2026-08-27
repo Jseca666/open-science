@@ -440,6 +440,7 @@ const recoverContextOverflowWorkspaceSession = async (
       toRuntimeUploadedAttachment(upload, session.projectId)
     ),
     parts: interruptedTurn.parts,
+    pdfContext: interruptedTurn.pdfContext,
     cwd: resumeCwd,
     projectId: session.projectId,
     permissionProfile: session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
