@@ -3225,6 +3225,7 @@ describe('artifact provenance repository', () => {
     await client.artifactVersion.update({
       where: { id: ancestryProbe.id },
       data: {
+        producerRunId: 'missing-execution-run',
         producerRunIndex: 0,
         executionSnapshotJson: null,
         executionSnapshotChecksum: null,
@@ -3238,6 +3239,7 @@ describe('artifact provenance repository', () => {
     await client.artifactVersion.update({
       where: { id: ancestryProbe.id },
       data: {
+        producerRunId: ancestryProbe.producerRunId,
         producerRunIndex: ancestryProbe.producerRunIndex,
         executionSnapshotJson: ancestryProbe.executionSnapshotJson,
         executionSnapshotChecksum: ancestryProbe.executionSnapshotChecksum,

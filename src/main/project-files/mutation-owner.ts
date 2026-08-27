@@ -16,10 +16,6 @@ import {
   type ProjectFilesClientProvider
 } from './mutation-projection'
 
-// Valid persisted revisions are non-negative. A collision loser stores this sentinel so it cannot
-// take the revision fast path and can claim the canonical row after its current owner is deleted.
-const RETRYABLE_COLLISION_REVISION = -1
-
 type ManagedFileSoftDeleteToken = string
 type ManagedFileSyncOptions = { force?: boolean }
 
@@ -48,6 +44,7 @@ class ProjectFilesMutationOwner {
       if (
         !options.force &&
         currentSync?.filesRevision === revision &&
+        currentSync.isComplete &&
         currentSync.deletedAt === null &&
         (await isFileProjectionCurrent(client, session.projectId, session.id))
       ) {
@@ -166,13 +163,14 @@ class ProjectFilesMutationOwner {
           ...preservedRows
         ])
 
+        const projectionDeleteOperationId = randomUUID()
         await tx.managedFile.updateMany({
           where: {
             projectId: session.projectId,
             sessionId: session.id,
             ...(retainedSeqs.size > 0 ? { seq: { notIn: [...retainedSeqs] } } : {})
           },
-          data: { deletedAt: now }
+          data: { deletedAt: now, deleteOperationId: projectionDeleteOperationId }
         })
 
         const artifactCount = [...retainedSources.values()].filter(
@@ -189,16 +187,16 @@ class ProjectFilesMutationOwner {
           create: {
             projectId: session.projectId,
             sessionId: session.id,
-            filesRevision:
-              hasActiveCollision || hasIncompleteFiles ? RETRYABLE_COLLISION_REVISION : revision,
+            filesRevision: revision,
+            isComplete: !hasActiveCollision && !hasIncompleteFiles,
             groupSortAtMs,
             artifactCount,
             uploadCount,
             syncedAt: now
           },
           update: {
-            filesRevision:
-              hasActiveCollision || hasIncompleteFiles ? RETRYABLE_COLLISION_REVISION : revision,
+            filesRevision: revision,
+            isComplete: !hasActiveCollision && !hasIncompleteFiles,
             groupSortAtMs,
             artifactCount,
             uploadCount,
@@ -465,11 +463,13 @@ class ProjectFilesMutationOwner {
           projectId,
           sessionId,
           filesRevision: 0,
+          isComplete: true,
           groupSortAtMs,
           artifactCount: artifactFiles.length,
           uploadCount: uploadFiles.length
         },
         update: {
+          isComplete: true,
           groupSortAtMs,
           artifactCount: artifactFiles.length,
           uploadCount: uploadFiles.length,

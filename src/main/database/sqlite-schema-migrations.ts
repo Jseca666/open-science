@@ -37,7 +37,24 @@ type SqliteRebuildTableSetOperation = {
   indexes: readonly string[]
 }
 
-type SqliteMigrationOperation = SqliteRebuildTableSetOperation
+type SqliteAddColumnIfMissingOperation = {
+  kind: 'add-column-if-missing'
+  version: 1
+  tableName: string
+  columnName: string
+  definition: string
+}
+
+type SqliteExecuteStatementsOperation = {
+  kind: 'execute-statements'
+  version: 1
+  statements: readonly string[]
+}
+
+type SqliteMigrationOperation =
+  | SqliteAddColumnIfMissingOperation
+  | SqliteExecuteStatementsOperation
+  | SqliteRebuildTableSetOperation
 
 const quoteIdentifier = (value: string): string => `"${value.replaceAll('"', '""')}"`
 const quoteLiteral = (value: string): string => `'${value.replaceAll("'", "''")}'`
@@ -295,6 +312,21 @@ const applySqliteMigrationOperations = async (
 ): Promise<void> => {
   for (const operation of operations) {
     switch (operation.kind) {
+      case 'add-column-if-missing': {
+        const columns = await readTableColumns(client, operation.tableName)
+        if (!columns.includes(operation.columnName)) {
+          await migrationSqlExecutor.execute(
+            client,
+            `ALTER TABLE ${quoteIdentifier(operation.tableName)} ADD COLUMN ${quoteIdentifier(operation.columnName)} ${operation.definition}`
+          )
+        }
+        break
+      }
+      case 'execute-statements':
+        for (const statement of operation.statements) {
+          await migrationSqlExecutor.execute(client, statement)
+        }
+        break
       case 'rebuild-table-set':
         await applyRebuildTableSet(client, operation)
         break

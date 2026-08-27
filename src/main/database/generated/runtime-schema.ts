@@ -238,12 +238,16 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     "updatedAt" DATETIME NOT NULL,
     "deletedAt" DATETIME,
     "deleteOperationId" TEXT,
-    CONSTRAINT "ManagedFile_source_check" CHECK ("source" IN ('artifact', 'upload'))
+    CONSTRAINT "ManagedFile_source_check" CHECK ("source" IN ('artifact', 'upload')),
+    CONSTRAINT "ManagedFile_nonnegative_check" CHECK ("sizeBytes" >= 0 AND ("mtimeMs" IS NULL OR "mtimeMs" >= 0) AND "sortAtMs" >= 0),
+    CONSTRAINT "ManagedFile_storageKey_check" CHECK (length(trim("storageKey")) > 0),
+    CONSTRAINT "ManagedFile_deletion_check" CHECK ((("deletedAt" IS NULL AND "deleteOperationId" IS NULL) OR ("deletedAt" IS NOT NULL AND "deleteOperationId" IS NOT NULL)))
 );`,
   `CREATE TABLE IF NOT EXISTS "ManagedFileSessionSync" (
     "projectId" TEXT NOT NULL,
     "sessionId" TEXT NOT NULL,
     "filesRevision" INTEGER NOT NULL,
+    "isComplete" BOOLEAN NOT NULL DEFAULT true,
     "groupSortAtMs" BIGINT NOT NULL,
     "artifactCount" INTEGER NOT NULL DEFAULT 0,
     "uploadCount" INTEGER NOT NULL DEFAULT 0,
@@ -251,7 +255,10 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     "deletedAt" DATETIME,
     "deleteOperationId" TEXT,
 
-    PRIMARY KEY ("projectId", "sessionId")
+    PRIMARY KEY ("projectId", "sessionId"),
+    CONSTRAINT "ManagedFileSessionSync_nonnegative_check" CHECK ("filesRevision" >= 0 AND "artifactCount" >= 0 AND "uploadCount" >= 0),
+    CONSTRAINT "ManagedFileSessionSync_isComplete_check" CHECK ("isComplete" IN (false, true)),
+    CONSTRAINT "ManagedFileSessionSync_deletion_check" CHECK ((("deletedAt" IS NULL AND "deleteOperationId" IS NULL) OR ("deletedAt" IS NOT NULL AND "deleteOperationId" IS NOT NULL)))
 );`,
   `CREATE TABLE IF NOT EXISTS "FileOriginSession" (
     "projectId" TEXT NOT NULL,
@@ -304,7 +311,8 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     "registeredAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" DATETIME NOT NULL,
     CONSTRAINT "UploadVersion_uploadFileId_fkey" FOREIGN KEY ("uploadFileId") REFERENCES "UploadFile" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
-    CONSTRAINT "UploadVersion_state_check" CHECK ("state" IN ('staging', 'ready'))
+    CONSTRAINT "UploadVersion_state_check" CHECK ("state" IN ('staging', 'ready')),
+    CONSTRAINT "UploadVersion_metadata_check" CHECK ("versionNumber" >= 1 AND "sizeBytes" >= 0 AND length(trim("contentStorageKey")) > 0 AND length(trim("filename")) > 0 AND length(trim("originalFilename")) > 0 AND length("checksum") = 64 AND "checksum" NOT GLOB '*[^0-9a-f]*')
 );`,
   `CREATE TABLE IF NOT EXISTS "VisionEvidence" (
     "id" TEXT NOT NULL PRIMARY KEY,
@@ -347,7 +355,9 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" DATETIME NOT NULL,
     CONSTRAINT "ArtifactMessageSnapshot_projectId_sessionId_fkey" FOREIGN KEY ("projectId", "sessionId") REFERENCES "FileOriginSession" ("projectId", "sessionId") ON DELETE RESTRICT ON UPDATE CASCADE,
-    CONSTRAINT "ArtifactMessageSnapshot_state_check" CHECK ("state" IN ('staging', 'ready'))
+    CONSTRAINT "ArtifactMessageSnapshot_state_check" CHECK ("state" IN ('staging', 'ready')),
+    CONSTRAINT "ArtifactMessageSnapshot_messageCount_check" CHECK ("messageCount" >= 0),
+    CONSTRAINT "ArtifactMessageSnapshot_readyChecksum_check" CHECK ("state" <> 'ready' OR (length("checksum") = 64 AND "checksum" NOT GLOB '*[^0-9a-f]*'))
 );`,
   `CREATE TABLE IF NOT EXISTS "ArtifactVersion" (
     "id" TEXT NOT NULL PRIMARY KEY,
@@ -388,7 +398,10 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     CONSTRAINT "ArtifactVersion_filename_check" CHECK (length("filename") > 0),
     CONSTRAINT "ArtifactVersion_evidenceJson_check" CHECK (json_valid("evidenceJson") AND json_type("evidenceJson") = 'object'),
     CONSTRAINT "ArtifactVersion_executionSnapshotJson_check" CHECK ("executionSnapshotJson" IS NULL OR (json_valid("executionSnapshotJson") AND json_type("executionSnapshotJson") = 'object')),
-    CONSTRAINT "ArtifactVersion_executionSnapshotBundle_check" CHECK ((("executionSnapshotJson" IS NULL AND "executionSnapshotChecksum" IS NULL AND "executionSnapshotStorageKey" IS NULL AND "executionSnapshotSchemaVersion" IS NULL) OR ("executionSnapshotJson" IS NOT NULL AND "executionSnapshotChecksum" IS NOT NULL AND "executionSnapshotStorageKey" IS NOT NULL AND "executionSnapshotSchemaVersion" IS NOT NULL)))
+    CONSTRAINT "ArtifactVersion_executionSnapshotBundle_check" CHECK ((("executionSnapshotJson" IS NULL AND "executionSnapshotChecksum" IS NULL AND "executionSnapshotStorageKey" IS NULL AND "executionSnapshotSchemaVersion" IS NULL) OR ("executionSnapshotJson" IS NOT NULL AND "executionSnapshotChecksum" IS NOT NULL AND "executionSnapshotStorageKey" IS NOT NULL AND "executionSnapshotSchemaVersion" IS NOT NULL))),
+    CONSTRAINT "ArtifactVersion_nonnegative_check" CHECK ("versionNumber" >= 1 AND "sizeBytes" >= 0 AND "evidenceSchemaVersion" >= 1 AND ("executionSnapshotSchemaVersion" IS NULL OR "executionSnapshotSchemaVersion" >= 1)),
+    CONSTRAINT "ArtifactVersion_producerRun_check" CHECK ((("producerRunId" IS NULL AND "producerRunIndex" IS NULL) OR ("producerRunId" IS NOT NULL AND length(trim("producerRunId")) > 0 AND "producerRunIndex" IS NOT NULL AND "producerRunIndex" >= 0))),
+    CONSTRAINT "ArtifactVersion_publishedMetadata_check" CHECK ("state" NOT IN ('pending', 'finalized') OR (length(trim("contentStorageKey")) > 0 AND length(trim("evidenceStorageKey")) > 0 AND length("checksum") = 64 AND "checksum" NOT GLOB '*[^0-9a-f]*' AND length("evidenceChecksum") = 64 AND "evidenceChecksum" NOT GLOB '*[^0-9a-f]*'))
 );`,
   `CREATE TABLE IF NOT EXISTS "ArtifactVersionInput" (
     "id" TEXT NOT NULL PRIMARY KEY,
@@ -415,7 +428,8 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     CONSTRAINT "ArtifactVersionInput_sourceProjectId_sourceSessionId_fkey" FOREIGN KEY ("sourceProjectId", "sourceSessionId") REFERENCES "FileOriginSession" ("projectId", "sessionId") ON DELETE RESTRICT ON UPDATE CASCADE,
     CONSTRAINT "ArtifactVersionInput_sourceKind_check" CHECK ("sourceKind" IN ('artifact-version', 'upload-version')),
     CONSTRAINT "ArtifactVersionInput_sourceIdentity_check" CHECK ((("sourceKind" = 'artifact-version' AND "sourceArtifactVersionId" IS NOT NULL AND "sourceUploadVersionId" IS NULL AND "inputFileVersionId" = "sourceArtifactVersionId") OR ("sourceKind" = 'upload-version' AND "sourceArtifactVersionId" IS NULL AND "sourceUploadVersionId" IS NOT NULL AND "inputFileVersionId" = "sourceUploadVersionId"))),
-    CONSTRAINT "ArtifactVersionInput_strongestAssociation_check" CHECK ("strongestAssociation" IN ('turn-attached', 'resolver-accessed', 'captured-version'))
+    CONSTRAINT "ArtifactVersionInput_strongestAssociation_check" CHECK ("strongestAssociation" IN ('turn-attached', 'resolver-accessed', 'captured-version')),
+    CONSTRAINT "ArtifactVersionInput_metadata_check" CHECK ("ordinal" >= 0 AND ("sourceVersionNumber" IS NULL OR "sourceVersionNumber" >= 1) AND "sizeBytes" >= 0 AND length("checksum") = 64 AND "checksum" NOT GLOB '*[^0-9a-f]*' AND length(trim("storageKey")) > 0)
 );`,
   `CREATE TABLE IF NOT EXISTS "ReviewFindingDisposition" (
     "id" TEXT NOT NULL PRIMARY KEY,

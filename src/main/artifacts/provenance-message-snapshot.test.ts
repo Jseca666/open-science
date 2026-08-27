@@ -289,11 +289,12 @@ describe('Provenance Message snapshots', () => {
     const legacyPayload: Record<string, unknown> = { ...snapshotPayload, schemaVersion: 2 }
     delete legacyPayload.activities
     delete legacyPayload.activityGroups
+    const legacyBytes = `${JSON.stringify(legacyPayload, null, 2)}\n`
     await client.artifactMessageSnapshot.update({
       where: { id: row.messageSnapshot!.id },
-      data: { checksum: '' }
+      data: { checksum: createHash('sha256').update(legacyBytes).digest('hex') }
     })
-    await writeFile(snapshotPath, `${JSON.stringify(legacyPayload, null, 2)}\n`, 'utf8')
+    await writeFile(snapshotPath, legacyBytes, 'utf8')
     await expect(
       provenance.getVersionProvenance({
         projectId: 'project-1',
@@ -304,22 +305,17 @@ describe('Provenance Message snapshots', () => {
     ).resolves.toMatchObject({
       messages: { state: 'available', activities: [], activityGroups: [] }
     })
-    await writeFile(snapshotPath, `${JSON.stringify(snapshotPayload, null, 2)}\n`, 'utf8')
+    const currentBytes = `${JSON.stringify(snapshotPayload, null, 2)}\n`
+    await writeFile(snapshotPath, currentBytes, 'utf8')
     await client.artifactMessageSnapshot.update({
       where: { id: row.messageSnapshot!.id },
-      data: { checksum: '' }
+      data: { checksum: createHash('sha256').update(currentBytes).digest('hex') }
     })
     expect(JSON.stringify(read.messages)).not.toContain('/secret')
     expect(JSON.stringify(read.messages)).not.toContain('aGVsbG8=')
 
-    // A legacy empty checksum is backfilled from structurally valid bytes. Once established, a
-    // same-shape content edit must fail deletion instead of silently retaining corrupted evidence.
-    await provenance.getVersionMessages({
-      projectId: 'project-1',
-      appSessionId: 'session-1',
-      artifactId: version.artifactId,
-      versionId: version.versionId
-    })
+    // Once the checksum is established, a same-shape content edit must fail deletion instead of
+    // silently retaining corrupted evidence.
     const tamperedPayload = structuredClone(snapshotPayload) as typeof snapshotPayload & {
       messages: Array<Record<string, unknown>>
     }
@@ -646,7 +642,7 @@ describe('Provenance Message snapshots', () => {
     await client.fileOriginSession.create({
       data: { projectId: 'project-1', sessionId: 'session-1' }
     })
-    const createStagingSnapshot = async (id: string, corruptChecksum = false): Promise<void> => {
+    const createStagingSnapshot = async (id: string, corruptChecksum = false): Promise<string> => {
       const storageKey = `artifacts/project-1/session-1/.provenance/message-snapshots/${id}.json`
       const terminalMessageId = `message-${id}`
       const payload = {
@@ -672,6 +668,7 @@ describe('Provenance Message snapshots', () => {
       const path = join(storageRoot!, ...storageKey.split('/'))
       await mkdir(dirname(path), { recursive: true })
       await writeFile(path, serialized, 'utf8')
+      const checksum = createHash('sha256').update(serialized).digest('hex')
       await client.artifactMessageSnapshot.create({
         data: {
           id,
@@ -683,14 +680,13 @@ describe('Provenance Message snapshots', () => {
           terminalMessageId,
           state: 'staging',
           storageKey,
-          checksum: corruptChecksum
-            ? 'f'.repeat(64)
-            : createHash('sha256').update(serialized).digest('hex'),
+          checksum: corruptChecksum ? 'f'.repeat(64) : '',
           messageCount: 1
         }
       })
+      return checksum
     }
-    await createStagingSnapshot('snapshot-valid-1')
+    const validChecksum = await createStagingSnapshot('snapshot-valid-1')
     await createStagingSnapshot('snapshot-corrupt-1', true)
     const snapshots = new ProvenanceMessageSnapshotRepository({
       storageRoot,
@@ -701,7 +697,7 @@ describe('Provenance Message snapshots', () => {
 
     await expect(
       client.artifactMessageSnapshot.findUniqueOrThrow({ where: { id: 'snapshot-valid-1' } })
-    ).resolves.toMatchObject({ state: 'ready' })
+    ).resolves.toMatchObject({ state: 'ready', checksum: validChecksum })
     await expect(
       client.artifactMessageSnapshot.findUnique({ where: { id: 'snapshot-corrupt-1' } })
     ).resolves.toBeNull()

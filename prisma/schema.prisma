@@ -320,6 +320,7 @@ model ManagedFileSessionSync {
   projectId         String
   sessionId         String
   filesRevision     Int
+  isComplete        Boolean   @default(true)
   groupSortAtMs     BigInt
   artifactCount     Int       @default(0)
   uploadCount       Int       @default(0)

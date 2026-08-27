@@ -73,7 +73,7 @@ describe('database JSON and remaining domain constraints', () => {
         "checksum","storageKey","strongestAssociation"
       ) VALUES (
         'input','version',0,'version','artifact-version','lineage','version','project','session',
-        'result.txt',0,'checksum','content','turn-attached'
+        'result.txt',0,'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','content','turn-attached'
       )`
       )
       await client.$executeRawUnsafe(

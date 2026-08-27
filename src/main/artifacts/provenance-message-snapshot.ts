@@ -482,7 +482,8 @@ class ProvenanceMessageSnapshotRepository {
             agentFrameId: snapshot.agentFrameId,
             messageBranchId: snapshot.messageBranchId,
             terminalMessageId: snapshot.terminalMessageId
-          }
+          },
+          'staging'
         )
         await client.$transaction(async (transaction) => {
           const promoted = await transaction.artifactMessageSnapshot.updateMany({
@@ -860,7 +861,8 @@ class ProvenanceMessageSnapshotRepository {
       agentFrameId: string
       messageBranchId: string
       terminalMessageId: string
-    }
+    },
+    checksumBackfillState: 'ready' | 'staging' = 'ready'
   ): Promise<void> {
     if (snapshot.state !== 'ready') {
       throw new Error(`Artifact Message snapshot is not ready: ${snapshot.id}`)
@@ -914,7 +916,7 @@ class ProvenanceMessageSnapshotRepository {
     if (!snapshot.checksum) {
       const client = await this.options.getClient()
       const updated = await client.artifactMessageSnapshot.updateMany({
-        where: { id: snapshot.id, state: 'ready', checksum: '' },
+        where: { id: snapshot.id, state: checksumBackfillState, checksum: '' },
         data: { checksum }
       })
       if (updated.count !== 1) {

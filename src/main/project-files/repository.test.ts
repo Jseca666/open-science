@@ -259,7 +259,7 @@ describe('ManagedFileIndexRepository', () => {
       sizeBytes: BigInt(versionNumber === 1 ? 9 : 12),
       checksum: checksumCharacter.repeat(64),
       evidenceJson: '{"schema_version":1}',
-      evidenceChecksum: checksumCharacter.toUpperCase().repeat(64),
+      evidenceChecksum: checksumCharacter.repeat(64),
       createdAt: new Date(`2026-07-28T00:00:0${versionNumber}.000Z`)
     })
     await client.artifactVersion.create({
@@ -1213,6 +1213,12 @@ describe('ManagedFileIndexRepository', () => {
         artifacts: [{ id: 'current', kind: 'managed-file', path: currentPath, name: 'current.txt' }]
       })
     )
+    await expect(
+      client.managedFile.findFirstOrThrow({ where: { sourceFileId: 'old' } })
+    ).resolves.toMatchObject({
+      deletedAt: expect.any(Date),
+      deleteOperationId: expect.any(String)
+    })
 
     const token = await repository.softDeleteSession(PROJECT_ID, SESSION_ID)
     await repository.restoreSession(PROJECT_ID, SESSION_ID, token)
@@ -2136,6 +2142,11 @@ describe('ManagedFileIndexRepository', () => {
     })
 
     await expect(repository.syncSession(session)).resolves.toEqual(['upload'])
+    await expect(
+      client.managedFileSessionSync.findUniqueOrThrow({
+        where: { projectId_sessionId: { projectId: PROJECT_ID, sessionId: SESSION_ID } }
+      })
+    ).resolves.toMatchObject({ filesRevision: session.filesRevision, isComplete: false })
     await expect(repository.getOverview(PROJECT_ID)).resolves.toMatchObject({
       totalCount: 1,
       uploadCount: 1,
@@ -2145,6 +2156,11 @@ describe('ManagedFileIndexRepository', () => {
 
     await writeManagedFile(missingArtifactPath, 'ready')
     await expect(repository.syncSession(session)).resolves.toEqual(['artifact'])
+    await expect(
+      client.managedFileSessionSync.findUniqueOrThrow({
+        where: { projectId_sessionId: { projectId: PROJECT_ID, sessionId: SESSION_ID } }
+      })
+    ).resolves.toMatchObject({ filesRevision: session.filesRevision, isComplete: true })
     await expect(repository.getOverview(PROJECT_ID)).resolves.toMatchObject({
       totalCount: 2,
       uploadCount: 1,

@@ -207,4 +207,229 @@ describe('database domain constraints', () => {
     }
     expect(accepted).toEqual([])
   })
+
+  it('rejects invalid managed-file and immutable provenance metadata', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-file-artifact-constraints-'))
+    client = createProjectDbClient(storageRoot)
+    await migrateApplicationDatabase(client)
+
+    const checksum = 'a'.repeat(64)
+    await client.$executeRawUnsafe(
+      `INSERT INTO "FileOriginSession" ("projectId","sessionId","updatedAt") VALUES ('project','session',CURRENT_TIMESTAMP)`
+    )
+    await client.$executeRawUnsafe(
+      `INSERT INTO "ArtifactLineage" ("id","projectId","sessionId","normalizedFilename","filename","updatedAt") VALUES ('artifact','project','session','result.txt','result.txt',CURRENT_TIMESTAMP)`
+    )
+    await client.$executeRawUnsafe(
+      `INSERT INTO "UploadFile" ("id","projectId","sessionId","filename","originalFilename","updatedAt") VALUES ('upload','project','session','input.txt','input.txt',CURRENT_TIMESTAMP)`
+    )
+    await client.$executeRawUnsafe(
+      `INSERT INTO "UploadVersion" ("id","uploadFileId","versionNumber","state","contentStorageKey","filename","originalFilename","sizeBytes","checksum","updatedAt") VALUES ('upload-version','upload',1,'ready','uploads/content','input.txt','input.txt',1,'${checksum}',CURRENT_TIMESTAMP)`
+    )
+    await client.$executeRawUnsafe(
+      `INSERT INTO "ArtifactMessageSnapshot" ("id","projectId","sessionId","rootFrameId","agentFrameId","messageBranchId","terminalMessageId","state","storageKey","checksum","messageCount","updatedAt") VALUES ('snapshot','project','session','root','agent','branch','message','staging','snapshots/message.json','${checksum}',1,CURRENT_TIMESTAMP)`
+    )
+    await client.$executeRawUnsafe(
+      `INSERT INTO "ArtifactVersion" ("id","artifactId","versionNumber","filename","artifactRunId","rootFrameId","agentFrameId","messageBranchId","runtimeSegmentId","promptMessageId","state","contentStorageKey","evidenceStorageKey","sizeBytes","checksum","evidenceJson","evidenceChecksum","evidenceSchemaVersion","updatedAt") VALUES ('artifact-version','artifact',1,'result.txt','run','root','agent','branch','segment','prompt','pending','artifacts/content','artifacts/evidence.json',1,'${checksum}','{}','${checksum}',1,CURRENT_TIMESTAMP)`
+    )
+    await client.$executeRawUnsafe(
+      `INSERT INTO "ArtifactVersionInput" ("id","artifactVersionId","ordinal","inputFileVersionId","sourceKind","sourceFileId","sourceArtifactVersionId","sourceVersionNumber","sourceProjectId","sourceSessionId","filename","sizeBytes","checksum","storageKey","strongestAssociation") VALUES ('input','artifact-version',0,'artifact-version','artifact-version','artifact','artifact-version',1,'project','session','result.txt',1,'${checksum}','artifacts/content','turn-attached')`
+    )
+    await client.$executeRawUnsafe(
+      `INSERT INTO "ManagedFile" ("source","sourceFileId","projectId","sessionId","displayName","storageKey","sizeBytes","mtimeMs","sortAtMs","updatedAt") VALUES ('artifact','artifact','project','session','result.txt','artifacts/content',1,1,1,CURRENT_TIMESTAMP)`
+    )
+    await client.$executeRawUnsafe(
+      `INSERT INTO "ManagedFileSessionSync" ("projectId","sessionId","filesRevision","groupSortAtMs","artifactCount","uploadCount") VALUES ('project','session',1,1,1,1)`
+    )
+
+    const invalidWrites = [
+      {
+        name: 'ManagedFile.sizeBytes',
+        sql: `UPDATE "ManagedFile" SET "sizeBytes" = -1 WHERE "sourceFileId" = 'artifact'`,
+        restore: `UPDATE "ManagedFile" SET "sizeBytes" = 1 WHERE "sourceFileId" = 'artifact'`
+      },
+      {
+        name: 'ManagedFile.mtimeMs',
+        sql: `UPDATE "ManagedFile" SET "mtimeMs" = -1 WHERE "sourceFileId" = 'artifact'`,
+        restore: `UPDATE "ManagedFile" SET "mtimeMs" = 1 WHERE "sourceFileId" = 'artifact'`
+      },
+      {
+        name: 'ManagedFile.sortAtMs',
+        sql: `UPDATE "ManagedFile" SET "sortAtMs" = -1 WHERE "sourceFileId" = 'artifact'`,
+        restore: `UPDATE "ManagedFile" SET "sortAtMs" = 1 WHERE "sourceFileId" = 'artifact'`
+      },
+      {
+        name: 'ManagedFile.storageKey',
+        sql: `UPDATE "ManagedFile" SET "storageKey" = ' ' WHERE "sourceFileId" = 'artifact'`,
+        restore: `UPDATE "ManagedFile" SET "storageKey" = 'artifacts/content' WHERE "sourceFileId" = 'artifact'`
+      },
+      {
+        name: 'ManagedFile deletedAt without operation',
+        sql: `UPDATE "ManagedFile" SET "deletedAt" = CURRENT_TIMESTAMP WHERE "sourceFileId" = 'artifact'`,
+        restore: `UPDATE "ManagedFile" SET "deletedAt" = NULL WHERE "sourceFileId" = 'artifact'`
+      },
+      {
+        name: 'ManagedFile operation without deletedAt',
+        sql: `UPDATE "ManagedFile" SET "deleteOperationId" = 'delete' WHERE "sourceFileId" = 'artifact'`,
+        restore: `UPDATE "ManagedFile" SET "deleteOperationId" = NULL WHERE "sourceFileId" = 'artifact'`
+      },
+      {
+        name: 'ManagedFileSessionSync.filesRevision',
+        sql: `UPDATE "ManagedFileSessionSync" SET "filesRevision" = -2 WHERE "sessionId" = 'session'`,
+        restore: `UPDATE "ManagedFileSessionSync" SET "filesRevision" = 1 WHERE "sessionId" = 'session'`
+      },
+      {
+        name: 'ManagedFileSessionSync.artifactCount',
+        sql: `UPDATE "ManagedFileSessionSync" SET "artifactCount" = -1 WHERE "sessionId" = 'session'`,
+        restore: `UPDATE "ManagedFileSessionSync" SET "artifactCount" = 1 WHERE "sessionId" = 'session'`
+      },
+      {
+        name: 'ManagedFileSessionSync.uploadCount',
+        sql: `UPDATE "ManagedFileSessionSync" SET "uploadCount" = -1 WHERE "sessionId" = 'session'`,
+        restore: `UPDATE "ManagedFileSessionSync" SET "uploadCount" = 1 WHERE "sessionId" = 'session'`
+      },
+      {
+        name: 'ManagedFileSessionSync deletedAt without operation',
+        sql: `UPDATE "ManagedFileSessionSync" SET "deletedAt" = CURRENT_TIMESTAMP WHERE "sessionId" = 'session'`,
+        restore: `UPDATE "ManagedFileSessionSync" SET "deletedAt" = NULL WHERE "sessionId" = 'session'`
+      },
+      {
+        name: 'ManagedFileSessionSync operation without deletedAt',
+        sql: `UPDATE "ManagedFileSessionSync" SET "deleteOperationId" = 'delete' WHERE "sessionId" = 'session'`,
+        restore: `UPDATE "ManagedFileSessionSync" SET "deleteOperationId" = NULL WHERE "sessionId" = 'session'`
+      },
+      {
+        name: 'UploadVersion.versionNumber',
+        sql: `UPDATE "UploadVersion" SET "versionNumber" = 0 WHERE "id" = 'upload-version'`,
+        restore: `UPDATE "UploadVersion" SET "versionNumber" = 1 WHERE "id" = 'upload-version'`
+      },
+      {
+        name: 'UploadVersion.sizeBytes',
+        sql: `UPDATE "UploadVersion" SET "sizeBytes" = -1 WHERE "id" = 'upload-version'`,
+        restore: `UPDATE "UploadVersion" SET "sizeBytes" = 1 WHERE "id" = 'upload-version'`
+      },
+      {
+        name: 'UploadVersion.contentStorageKey',
+        sql: `UPDATE "UploadVersion" SET "contentStorageKey" = ' ' WHERE "id" = 'upload-version'`,
+        restore: `UPDATE "UploadVersion" SET "contentStorageKey" = 'uploads/content' WHERE "id" = 'upload-version'`
+      },
+      {
+        name: 'UploadVersion.filename',
+        sql: `UPDATE "UploadVersion" SET "filename" = ' ' WHERE "id" = 'upload-version'`,
+        restore: `UPDATE "UploadVersion" SET "filename" = 'input.txt' WHERE "id" = 'upload-version'`
+      },
+      {
+        name: 'UploadVersion.originalFilename',
+        sql: `UPDATE "UploadVersion" SET "originalFilename" = ' ' WHERE "id" = 'upload-version'`,
+        restore: `UPDATE "UploadVersion" SET "originalFilename" = 'input.txt' WHERE "id" = 'upload-version'`
+      },
+      {
+        name: 'UploadVersion.checksum',
+        sql: `UPDATE "UploadVersion" SET "checksum" = ' ' WHERE "id" = 'upload-version'`,
+        restore: `UPDATE "UploadVersion" SET "checksum" = '${checksum}' WHERE "id" = 'upload-version'`
+      },
+      {
+        name: 'ArtifactMessageSnapshot.messageCount',
+        sql: `UPDATE "ArtifactMessageSnapshot" SET "messageCount" = -1 WHERE "id" = 'snapshot'`,
+        restore: `UPDATE "ArtifactMessageSnapshot" SET "messageCount" = 1 WHERE "id" = 'snapshot'`
+      },
+      {
+        name: 'ArtifactMessageSnapshot ready checksum',
+        sql: `UPDATE "ArtifactMessageSnapshot" SET "state" = 'ready', "checksum" = 'invalid' WHERE "id" = 'snapshot'`,
+        restore: `UPDATE "ArtifactMessageSnapshot" SET "state" = 'staging', "checksum" = '${checksum}' WHERE "id" = 'snapshot'`
+      },
+      {
+        name: 'ArtifactVersion.versionNumber',
+        sql: `UPDATE "ArtifactVersion" SET "versionNumber" = 0 WHERE "id" = 'artifact-version'`,
+        restore: `UPDATE "ArtifactVersion" SET "versionNumber" = 1 WHERE "id" = 'artifact-version'`
+      },
+      {
+        name: 'ArtifactVersion.sizeBytes',
+        sql: `UPDATE "ArtifactVersion" SET "sizeBytes" = -1 WHERE "id" = 'artifact-version'`,
+        restore: `UPDATE "ArtifactVersion" SET "sizeBytes" = 1 WHERE "id" = 'artifact-version'`
+      },
+      {
+        name: 'ArtifactVersion.evidenceSchemaVersion',
+        sql: `UPDATE "ArtifactVersion" SET "evidenceSchemaVersion" = 0 WHERE "id" = 'artifact-version'`,
+        restore: `UPDATE "ArtifactVersion" SET "evidenceSchemaVersion" = 1 WHERE "id" = 'artifact-version'`
+      },
+      {
+        name: 'ArtifactVersion.executionSnapshotSchemaVersion',
+        sql: `UPDATE "ArtifactVersion" SET "executionSnapshotJson" = '{}', "executionSnapshotChecksum" = '${checksum}', "executionSnapshotStorageKey" = 'artifacts/execution.json', "executionSnapshotSchemaVersion" = 0 WHERE "id" = 'artifact-version'`,
+        restore: `UPDATE "ArtifactVersion" SET "executionSnapshotJson" = NULL, "executionSnapshotChecksum" = NULL, "executionSnapshotStorageKey" = NULL, "executionSnapshotSchemaVersion" = NULL WHERE "id" = 'artifact-version'`
+      },
+      {
+        name: 'ArtifactVersion producer id without index',
+        sql: `UPDATE "ArtifactVersion" SET "producerRunId" = 'producer' WHERE "id" = 'artifact-version'`,
+        restore: `UPDATE "ArtifactVersion" SET "producerRunId" = NULL WHERE "id" = 'artifact-version'`
+      },
+      {
+        name: 'ArtifactVersion producer index without id',
+        sql: `UPDATE "ArtifactVersion" SET "producerRunIndex" = 0 WHERE "id" = 'artifact-version'`,
+        restore: `UPDATE "ArtifactVersion" SET "producerRunIndex" = NULL WHERE "id" = 'artifact-version'`
+      },
+      {
+        name: 'ArtifactVersion negative producer index',
+        sql: `UPDATE "ArtifactVersion" SET "producerRunId" = 'producer', "producerRunIndex" = -1 WHERE "id" = 'artifact-version'`,
+        restore: `UPDATE "ArtifactVersion" SET "producerRunId" = NULL, "producerRunIndex" = NULL WHERE "id" = 'artifact-version'`
+      },
+      {
+        name: 'ArtifactVersion published content storage',
+        sql: `UPDATE "ArtifactVersion" SET "contentStorageKey" = ' ' WHERE "id" = 'artifact-version'`,
+        restore: `UPDATE "ArtifactVersion" SET "contentStorageKey" = 'artifacts/content' WHERE "id" = 'artifact-version'`
+      },
+      {
+        name: 'ArtifactVersion published evidence storage',
+        sql: `UPDATE "ArtifactVersion" SET "evidenceStorageKey" = ' ' WHERE "id" = 'artifact-version'`,
+        restore: `UPDATE "ArtifactVersion" SET "evidenceStorageKey" = 'artifacts/evidence.json' WHERE "id" = 'artifact-version'`
+      },
+      {
+        name: 'ArtifactVersion published content checksum',
+        sql: `UPDATE "ArtifactVersion" SET "checksum" = 'invalid' WHERE "id" = 'artifact-version'`,
+        restore: `UPDATE "ArtifactVersion" SET "checksum" = '${checksum}' WHERE "id" = 'artifact-version'`
+      },
+      {
+        name: 'ArtifactVersion published evidence checksum',
+        sql: `UPDATE "ArtifactVersion" SET "evidenceChecksum" = 'invalid' WHERE "id" = 'artifact-version'`,
+        restore: `UPDATE "ArtifactVersion" SET "evidenceChecksum" = '${checksum}' WHERE "id" = 'artifact-version'`
+      },
+      {
+        name: 'ArtifactVersionInput.ordinal',
+        sql: `UPDATE "ArtifactVersionInput" SET "ordinal" = -1 WHERE "id" = 'input'`,
+        restore: `UPDATE "ArtifactVersionInput" SET "ordinal" = 0 WHERE "id" = 'input'`
+      },
+      {
+        name: 'ArtifactVersionInput.sourceVersionNumber',
+        sql: `UPDATE "ArtifactVersionInput" SET "sourceVersionNumber" = 0 WHERE "id" = 'input'`,
+        restore: `UPDATE "ArtifactVersionInput" SET "sourceVersionNumber" = 1 WHERE "id" = 'input'`
+      },
+      {
+        name: 'ArtifactVersionInput.sizeBytes',
+        sql: `UPDATE "ArtifactVersionInput" SET "sizeBytes" = -1 WHERE "id" = 'input'`,
+        restore: `UPDATE "ArtifactVersionInput" SET "sizeBytes" = 1 WHERE "id" = 'input'`
+      },
+      {
+        name: 'ArtifactVersionInput.checksum',
+        sql: `UPDATE "ArtifactVersionInput" SET "checksum" = ' ' WHERE "id" = 'input'`,
+        restore: `UPDATE "ArtifactVersionInput" SET "checksum" = '${checksum}' WHERE "id" = 'input'`
+      },
+      {
+        name: 'ArtifactVersionInput.storageKey',
+        sql: `UPDATE "ArtifactVersionInput" SET "storageKey" = ' ' WHERE "id" = 'input'`,
+        restore: `UPDATE "ArtifactVersionInput" SET "storageKey" = 'artifacts/content' WHERE "id" = 'input'`
+      }
+    ]
+
+    const accepted: string[] = []
+    for (const invalidWrite of invalidWrites) {
+      try {
+        await client.$executeRawUnsafe(invalidWrite.sql)
+        accepted.push(invalidWrite.name)
+        await client.$executeRawUnsafe(invalidWrite.restore)
+      } catch {
+        // Expected: the SQLite CHECK contract rejects the write.
+      }
+    }
+    expect(accepted).toEqual([])
+  })
 })

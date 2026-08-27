@@ -181,14 +181,59 @@
       "expression": "\"source\" IN ('artifact', 'upload')"
     },
     {
+      "tableName": "ManagedFile",
+      "name": "ManagedFile_nonnegative_check",
+      "expression": "\"sizeBytes\" >= 0 AND (\"mtimeMs\" IS NULL OR \"mtimeMs\" >= 0) AND \"sortAtMs\" >= 0"
+    },
+    {
+      "tableName": "ManagedFile",
+      "name": "ManagedFile_storageKey_check",
+      "expression": "length(trim(\"storageKey\")) > 0"
+    },
+    {
+      "tableName": "ManagedFile",
+      "name": "ManagedFile_deletion_check",
+      "expression": "((\"deletedAt\" IS NULL AND \"deleteOperationId\" IS NULL) OR (\"deletedAt\" IS NOT NULL AND \"deleteOperationId\" IS NOT NULL))"
+    },
+    {
+      "tableName": "ManagedFileSessionSync",
+      "name": "ManagedFileSessionSync_nonnegative_check",
+      "expression": "\"filesRevision\" >= 0 AND \"artifactCount\" >= 0 AND \"uploadCount\" >= 0"
+    },
+    {
+      "tableName": "ManagedFileSessionSync",
+      "name": "ManagedFileSessionSync_isComplete_check",
+      "expression": "\"isComplete\" IN (false, true)"
+    },
+    {
+      "tableName": "ManagedFileSessionSync",
+      "name": "ManagedFileSessionSync_deletion_check",
+      "expression": "((\"deletedAt\" IS NULL AND \"deleteOperationId\" IS NULL) OR (\"deletedAt\" IS NOT NULL AND \"deleteOperationId\" IS NOT NULL))"
+    },
+    {
       "tableName": "UploadVersion",
       "name": "UploadVersion_state_check",
       "expression": "\"state\" IN ('staging', 'ready')"
     },
     {
+      "tableName": "UploadVersion",
+      "name": "UploadVersion_metadata_check",
+      "expression": "\"versionNumber\" >= 1 AND \"sizeBytes\" >= 0 AND length(trim(\"contentStorageKey\")) > 0 AND length(trim(\"filename\")) > 0 AND length(trim(\"originalFilename\")) > 0 AND length(\"checksum\") = 64 AND \"checksum\" NOT GLOB '*[^0-9a-f]*'"
+    },
+    {
       "tableName": "ArtifactMessageSnapshot",
       "name": "ArtifactMessageSnapshot_state_check",
       "expression": "\"state\" IN ('staging', 'ready')"
+    },
+    {
+      "tableName": "ArtifactMessageSnapshot",
+      "name": "ArtifactMessageSnapshot_messageCount_check",
+      "expression": "\"messageCount\" >= 0"
+    },
+    {
+      "tableName": "ArtifactMessageSnapshot",
+      "name": "ArtifactMessageSnapshot_readyChecksum_check",
+      "expression": "\"state\" <> 'ready' OR (length(\"checksum\") = 64 AND \"checksum\" NOT GLOB '*[^0-9a-f]*')"
     },
     {
       "tableName": "ArtifactVersion",
@@ -216,6 +261,21 @@
       "expression": "((\"executionSnapshotJson\" IS NULL AND \"executionSnapshotChecksum\" IS NULL AND \"executionSnapshotStorageKey\" IS NULL AND \"executionSnapshotSchemaVersion\" IS NULL) OR (\"executionSnapshotJson\" IS NOT NULL AND \"executionSnapshotChecksum\" IS NOT NULL AND \"executionSnapshotStorageKey\" IS NOT NULL AND \"executionSnapshotSchemaVersion\" IS NOT NULL))"
     },
     {
+      "tableName": "ArtifactVersion",
+      "name": "ArtifactVersion_nonnegative_check",
+      "expression": "\"versionNumber\" >= 1 AND \"sizeBytes\" >= 0 AND \"evidenceSchemaVersion\" >= 1 AND (\"executionSnapshotSchemaVersion\" IS NULL OR \"executionSnapshotSchemaVersion\" >= 1)"
+    },
+    {
+      "tableName": "ArtifactVersion",
+      "name": "ArtifactVersion_producerRun_check",
+      "expression": "((\"producerRunId\" IS NULL AND \"producerRunIndex\" IS NULL) OR (\"producerRunId\" IS NOT NULL AND length(trim(\"producerRunId\")) > 0 AND \"producerRunIndex\" IS NOT NULL AND \"producerRunIndex\" >= 0))"
+    },
+    {
+      "tableName": "ArtifactVersion",
+      "name": "ArtifactVersion_publishedMetadata_check",
+      "expression": "\"state\" NOT IN ('pending', 'finalized') OR (length(trim(\"contentStorageKey\")) > 0 AND length(trim(\"evidenceStorageKey\")) > 0 AND length(\"checksum\") = 64 AND \"checksum\" NOT GLOB '*[^0-9a-f]*' AND length(\"evidenceChecksum\") = 64 AND \"evidenceChecksum\" NOT GLOB '*[^0-9a-f]*')"
+    },
+    {
       "tableName": "ArtifactVersionInput",
       "name": "ArtifactVersionInput_sourceKind_check",
       "expression": "\"sourceKind\" IN ('artifact-version', 'upload-version')"
@@ -229,6 +289,11 @@
       "tableName": "ArtifactVersionInput",
       "name": "ArtifactVersionInput_strongestAssociation_check",
       "expression": "\"strongestAssociation\" IN ('turn-attached', 'resolver-accessed', 'captured-version')"
+    },
+    {
+      "tableName": "ArtifactVersionInput",
+      "name": "ArtifactVersionInput_metadata_check",
+      "expression": "\"ordinal\" >= 0 AND (\"sourceVersionNumber\" IS NULL OR \"sourceVersionNumber\" >= 1) AND \"sizeBytes\" >= 0 AND length(\"checksum\") = 64 AND \"checksum\" NOT GLOB '*[^0-9a-f]*' AND length(trim(\"storageKey\")) > 0"
     },
     {
       "tableName": "ReviewScopeSnapshot",

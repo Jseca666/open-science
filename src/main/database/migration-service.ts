@@ -36,6 +36,7 @@ import {
   MEMORY_AUXILIARY_SCHEMA_OBJECTS,
   MEMORY_AUXILIARY_TABLE_NAMES
 } from './migrations/0017-agent-memory-project-scope'
+import { fileArtifactDataConstraintsMigration } from './migrations/0018-file-artifact-data-constraints'
 import {
   applySqliteMigrationOperations,
   type SqliteMigrationOperation
@@ -285,6 +286,12 @@ const COMPUTE_JOB_SENSITIVE_DATA_ENCRYPTION_CHECKSUM = checksumMigrationPayload(
   computeJobSensitiveDataEncryptionMigration.verifiers,
   computeJobSensitiveDataEncryptionMigration.operations
 )
+const FILE_ARTIFACT_DATA_CONSTRAINTS_CHECKSUM = checksumMigrationPayload(
+  fileArtifactDataConstraintsMigration.id,
+  fileArtifactDataConstraintsMigration.statements,
+  fileArtifactDataConstraintsMigration.verifiers,
+  fileArtifactDataConstraintsMigration.operations
+)
 const DATABASE_DOMAIN_ALLOWED_SUFFIX_CHECKS: AllowedSuffixCheckConstraints = Object.fromEntries(
   databaseDomainConstraintsMigration.verifiers[0].tables.map(({ table, constraints }) => [
     table,
@@ -348,6 +355,15 @@ const AGENT_MEMORY_PROJECT_SCOPE_ALLOWED_SUFFIX_CHECKS: AllowedSuffixCheckConstr
         Object.fromEntries(constraints.map(({ name, expression }) => [name, expression]))
       ])
   )
+const FILE_ARTIFACT_DATA_ALLOWED_SUFFIX_CHECKS: AllowedSuffixCheckConstraints = Object.fromEntries(
+  fileArtifactDataConstraintsMigration.verifiers
+    .filter((verifier) => verifier.kind === 'check-constraints-exist')
+    .flatMap((verifier) => verifier.tables)
+    .map(({ table, constraints }) => [
+      table,
+      Object.fromEntries(constraints.map(({ name, expression }) => [name, expression]))
+    ])
+)
 const mergeAllowedSuffixChecks = (
   ...contracts: readonly AllowedSuffixCheckConstraints[]
 ): AllowedSuffixCheckConstraints => {
@@ -459,6 +475,12 @@ const MIGRATION_MANIFEST = [
   {
     ...agentMemoryProjectScopeMigration,
     checksum: AGENT_MEMORY_PROJECT_SCOPE_CHECKSUM,
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...fileArtifactDataConstraintsMigration,
+    checksum: FILE_ARTIFACT_DATA_CONSTRAINTS_CHECKSUM,
     backupOnApply: 'required',
     backupRetention: 'retain'
   }
@@ -1380,6 +1402,11 @@ const migrateApplicationDatabaseWithManifest = async (
       candidate.id === agentMemoryProjectScopeMigration.id &&
       candidate.checksum === AGENT_MEMORY_PROJECT_SCOPE_CHECKSUM
   )
+  const adoptsFileArtifactDataConstraints = manifest.some(
+    (candidate) =>
+      candidate.id === fileArtifactDataConstraintsMigration.id &&
+      candidate.checksum === FILE_ARTIFACT_DATA_CONSTRAINTS_CHECKSUM
+  )
   const adoptedLegacy = appliedCount === 0 && hasExistingApplicationTables
   const allowedSuffixChecks = mergeAllowedSuffixChecks(
     adoptsDatabaseDomainConstraints ? DATABASE_DOMAIN_ALLOWED_SUFFIX_CHECKS : {},
@@ -1388,7 +1415,8 @@ const migrateApplicationDatabaseWithManifest = async (
     adoptsVisionEvidence ? VISION_EVIDENCE_ALLOWED_SUFFIX_CHECKS : {},
     adoptsComputePasswordAuth ? COMPUTE_PASSWORD_AUTH_ALLOWED_SUFFIX_CHECKS : {},
     adoptsCrossResourceTags ? CROSS_RESOURCE_TAGS_ALLOWED_SUFFIX_CHECKS : {},
-    adoptsAgentMemoryProjectScope ? AGENT_MEMORY_PROJECT_SCOPE_ALLOWED_SUFFIX_CHECKS : {}
+    adoptsAgentMemoryProjectScope ? AGENT_MEMORY_PROJECT_SCOPE_ALLOWED_SUFFIX_CHECKS : {},
+    adoptsFileArtifactDataConstraints ? FILE_ARTIFACT_DATA_ALLOWED_SUFFIX_CHECKS : {}
   )
 
   let nextIndex = appliedCount
@@ -1433,6 +1461,7 @@ export {
   TAG_ORDERING_CHECKSUM,
   REVIEW_QUERY_INDEXES_CHECKSUM,
   AGENT_MEMORY_PROJECT_SCOPE_CHECKSUM,
+  FILE_ARTIFACT_DATA_CONSTRAINTS_CHECKSUM,
   DatabaseMigrationError,
   checksumMigrationPayload,
   classifyDatabaseFailure,

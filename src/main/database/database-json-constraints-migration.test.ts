@@ -89,7 +89,7 @@ const seedValidAffectedRows = async (client: PrismaClient): Promise<void> => {
       "checksum","storageKey","strongestAssociation"
     ) VALUES (
       'input','version',0,'version','artifact-version','lineage','version','project','session',
-      'result.txt',0,'checksum','content','turn-attached'
+      'result.txt',0,'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','content','turn-attached'
     )`
   )
   await client.$executeRawUnsafe(
@@ -156,10 +156,11 @@ describe('database JSON constraints migration', () => {
           '0014_review_query_indexes',
           '0015_session_model_call_usage',
           '0016_compute_job_sensitive_data_encryption',
-          '0017_agent_memory_project_scope'
+          '0017_agent_memory_project_scope',
+          '0018_file_artifact_data_constraints'
         ],
         from: '0007_notification_attention_metadata',
-        to: '0017_agent_memory_project_scope'
+        to: '0018_file_artifact_data_constraints'
       })
       await expect(access(`${databasePath}.before-${MIGRATION_ID}.backup`)).rejects.toMatchObject({
         code: 'ENOENT'
@@ -183,9 +184,12 @@ describe('database JSON constraints migration', () => {
       ).rejects.toMatchObject({ code: 'ENOENT' })
       await expect(
         access(`${databasePath}.before-0016_compute_job_sensitive_data_encryption.backup`)
-      ).resolves.toBeUndefined()
+      ).rejects.toMatchObject({ code: 'ENOENT' })
       await expect(
         access(`${databasePath}.before-0017_agent_memory_project_scope.backup`)
+      ).resolves.toBeUndefined()
+      await expect(
+        access(`${databasePath}.before-0018_file_artifact_data_constraints.backup`)
       ).resolves.toBeUndefined()
 
       await expect(
