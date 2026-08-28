@@ -7,6 +7,36 @@ import { createManagedPdfLoadingTask } from '../managed-pdf-document'
 import { PdfPreviewContent } from './PdfPreview'
 
 vi.mock('../managed-pdf-document', () => ({ createManagedPdfLoadingTask: vi.fn() }))
+const { cancelTextLayer, renderTextLayer } = vi.hoisted(() => ({
+  cancelTextLayer: vi.fn(),
+  renderTextLayer: vi.fn()
+}))
+vi.mock('../pdfjs', () => ({
+  pdfjsLib: {
+    TextLayer: class {
+      constructor(
+        private readonly options: {
+          textContentSource: { items?: Array<{ str?: string }> }
+          container: HTMLElement
+        }
+      ) {}
+
+      render(): Promise<void> {
+        renderTextLayer(this.options)
+        for (const item of this.options.textContentSource.items ?? []) {
+          const span = document.createElement('span')
+          span.textContent = item.str ?? ''
+          this.options.container.appendChild(span)
+        }
+        return Promise.resolve()
+      }
+
+      cancel(): void {
+        cancelTextLayer()
+      }
+    }
+  }
+}))
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -39,6 +69,9 @@ describe('PdfPreviewContent', () => {
     )
     getPage = vi.fn().mockResolvedValue({
       getViewport: vi.fn(() => ({ width: 600, height: 800 })),
+      getTextContent: vi
+        .fn()
+        .mockResolvedValue({ items: [{ str: 'Selectable text' }], styles: {} }),
       render: vi.fn(() => ({ promise: Promise.resolve(), cancel: vi.fn() })),
       cleanup: vi.fn()
     })
@@ -86,6 +119,8 @@ describe('PdfPreviewContent', () => {
       expect.objectContaining({ size: 80 * 1024 * 1024 })
     )
     expect(container.querySelector('canvas')).not.toBeNull()
+    await vi.waitFor(() => expect(renderTextLayer).toHaveBeenCalled())
+    expect(container.querySelector('[data-pdf-text-layer]')?.textContent).toBe('Selectable text')
 
     await act(async () => root.unmount())
     expect(window.api.previewResources.release).toHaveBeenCalledWith({ resourceId: 'resource-1' })

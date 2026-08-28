@@ -91,6 +91,7 @@ describe('PreviewTextAnnotationSurface', () => {
     onUpdateAnnotationNote,
     onAnnotationError = vi.fn(),
     previewItem = item(),
+    sourcePageNumber,
     content = 'Experiment result: confidence intervals overlap.'
   }: {
     activeAnnotations?: readonly Annotation[]
@@ -98,6 +99,7 @@ describe('PreviewTextAnnotationSurface', () => {
     onUpdateAnnotationNote?: (id: string, note: string) => undefined
     onAnnotationError?: (error: AnnotationValidationError) => void
     previewItem?: PreviewFileItem
+    sourcePageNumber?: number
     content?: string
   } = {}): Promise<void> => {
     await act(async () => {
@@ -108,6 +110,7 @@ describe('PreviewTextAnnotationSurface', () => {
           onAddAnnotation={onAddAnnotation}
           onUpdateAnnotationNote={onUpdateAnnotationNote}
           onAnnotationError={onAnnotationError}
+          sourcePageNumber={sourcePageNumber}
         >
           <p>{content}</p>
         </PreviewTextAnnotationSurface>
@@ -183,6 +186,20 @@ describe('PreviewTextAnnotationSurface', () => {
       })
     )
     expect(registeredRanges.size).toBe(1)
+  })
+
+  it('records the owning PDF page with a selected quote', async () => {
+    const onAddAnnotation = vi.fn<(annotation: Annotation) => undefined>(() => undefined)
+    await renderSurface({ onAddAnnotation, sourcePageNumber: 3 })
+    await selectQuote()
+    await confirmAnnotation()
+
+    expect(onAddAnnotation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'text',
+        source: expect.objectContaining({ pageNumber: 3 })
+      })
+    )
   })
 
   it('renders the annotation editor above full-screen preview chrome', async () => {

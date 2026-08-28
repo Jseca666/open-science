@@ -56,7 +56,7 @@ export const renderPreviewFile = ({
       return <TiffPreviewRenderer item={item} />
     case 'pdf':
       return (
-        <PdfPreviewRenderer item={item} onPdfReadingPositionChange={onPdfReadingPositionChange} />
+        <PdfPreviewRenderer {...props} onPdfReadingPositionChange={onPdfReadingPositionChange} />
       )
     case 'word':
     case 'spreadsheet':

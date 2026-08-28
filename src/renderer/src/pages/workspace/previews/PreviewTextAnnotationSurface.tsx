@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
 import type { TextAnnotation } from '../../../../../shared/annotations'
+import { parseUploadVersionReference } from '../../../../../shared/uploads'
 import type { PreviewFileRendererProps } from './preview-types'
 import {
   revealTextAnnotationRange,
@@ -37,26 +38,41 @@ const NO_ANNOTATIONS: readonly never[] = []
 // mousedown, so the draft can only survive through an exemption).
 const ANNOTATE_UI_SELECTOR = '[data-annotation-trigger], [data-radix-popper-content-wrapper]'
 
-const projectFileSource = (item: PreviewFileItem): TextAnnotation['source'] | undefined => {
+const projectFileVersionId = (item: PreviewFileItem): string | undefined =>
+  item.selectedVersionId ??
+  (item.source === 'upload' ? parseUploadVersionReference(item.path)?.versionId : undefined)
+
+const projectFileSource = (
+  item: PreviewFileItem,
+  pageNumber?: number
+): TextAnnotation['source'] | undefined => {
   if (!item.projectId) return undefined
+  const versionId = projectFileVersionId(item)
+  if (pageNumber !== undefined && !versionId) return undefined
   return {
     kind: 'project-file',
     projectId: item.projectId,
     path: item.path,
     name: item.name,
-    ...(item.selectedVersionId ? { versionId: item.selectedVersionId } : {}),
-    ...(item.sessionId ? { sessionId: item.sessionId } : {})
+    ...(versionId ? { versionId } : {}),
+    ...(item.sessionId ? { sessionId: item.sessionId } : {}),
+    ...(pageNumber !== undefined ? { pageNumber } : {})
   }
 }
 
-const belongsToPreview = (annotation: TextAnnotation, item: PreviewFileItem): boolean => {
+const belongsToPreview = (
+  annotation: TextAnnotation,
+  item: PreviewFileItem,
+  pageNumber?: number
+): boolean => {
   const source = annotation.source
   if (source.kind !== 'project-file' || !item.projectId) return false
   if (source.projectId !== item.projectId || source.path !== item.path) return false
-  if (source.versionId || item.selectedVersionId) {
-    return source.versionId === item.selectedVersionId
+  const versionId = projectFileVersionId(item)
+  if (source.versionId || versionId) {
+    if (source.versionId !== versionId) return false
   }
-  return true
+  return source.pageNumber === pageNumber
 }
 
 const getDraftHighlight = (): Highlight | undefined => {
@@ -83,8 +99,12 @@ export const PreviewTextAnnotationSurface = ({
   onAddAnnotation,
   onUpdateAnnotationNote,
   onAnnotationError,
+  sourcePageNumber,
   children
-}: PreviewFileRendererProps & { children: React.ReactNode }): React.JSX.Element => {
+}: PreviewFileRendererProps & {
+  sourcePageNumber?: number
+  children: React.ReactNode
+}): React.JSX.Element => {
   const { t } = useTranslation()
   const surfaceRef = useRef<HTMLDivElement | null>(null)
   const contentRef = useRef<HTMLDivElement | null>(null)
@@ -96,14 +116,14 @@ export const PreviewTextAnnotationSurface = ({
   const [note, setNote] = useState('')
   const [annotationControls, setAnnotationControls] = useState<readonly AnnotationControl[]>([])
   const [hoveredAnnotationId, setHoveredAnnotationId] = useState<string>()
-  const source = projectFileSource(item)
+  const source = projectFileSource(item, sourcePageNumber)
   const matchingAnnotations = useMemo(
     () =>
       activeAnnotations.filter(
         (annotation): annotation is TextAnnotation =>
-          annotation.kind === 'text' && belongsToPreview(annotation, item)
+          annotation.kind === 'text' && belongsToPreview(annotation, item, sourcePageNumber)
       ),
-    [activeAnnotations, item]
+    [activeAnnotations, item, sourcePageNumber]
   )
 
   const measureAnnotationControls = useCallback((): void => {

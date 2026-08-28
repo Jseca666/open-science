@@ -130,6 +130,32 @@ describe('annotation reveal', () => {
     unsubscribe()
   })
 
+  it('keeps PDF page preparation available until the page text layer can mount', () => {
+    const annotation: Annotation = {
+      id: 'annotation-pdf-page',
+      kind: 'text',
+      target: 'agent',
+      quote: 'late PDF quote',
+      source: {
+        kind: 'project-file',
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        path: 'upload-version:project-1/session-1/version-1',
+        name: 'paper.pdf',
+        versionId: 'version-1',
+        pageNumber: 7
+      }
+    }
+
+    requestAnnotationReveal(annotation)
+    const listener = vi.fn()
+    const unsubscribe = subscribeAnnotationRevealPreparation(listener)
+
+    expect(listener).toHaveBeenCalledWith(annotation)
+    unsubscribe()
+    subscribeAnnotationReveal(() => true)()
+  })
+
   it('keeps a pending reveal claimable after the visual highlight duration has elapsed', () => {
     requestAnnotationReveal(agentAnnotation('annotation-late-after-duration'))
 

@@ -17,10 +17,18 @@ const REVEAL_DURATION_MS = 1_600
 let revealedRange: Range | undefined
 let revealTimer: ReturnType<typeof setTimeout> | undefined
 let pendingRevealId: string | undefined
+let pendingRevealAnnotation: Annotation | undefined
 
-const publishAnnotationReveal = (annotationId: string): void => {
-  pendingRevealId = annotationId
-  document.dispatchEvent(new CustomEvent(REVEAL_EVENT, { detail: annotationId }))
+const publishAnnotationReveal = (annotation: Annotation): void => {
+  pendingRevealId = annotation.id
+  pendingRevealAnnotation =
+    annotation.kind === 'text' &&
+    annotation.source.kind === 'project-file' &&
+    annotation.source.pageNumber !== undefined
+      ? annotation
+      : undefined
+  document.dispatchEvent(new CustomEvent(REVEAL_PREPARE_EVENT, { detail: annotation }))
+  document.dispatchEvent(new CustomEvent(REVEAL_EVENT, { detail: annotation.id }))
 }
 
 const subscribeAnnotationReveal = (
@@ -28,7 +36,10 @@ const subscribeAnnotationReveal = (
 ): (() => void) => {
   const deliver = (annotationId: string): void => {
     if (!listener(annotationId)) return
-    if (pendingRevealId === annotationId) pendingRevealId = undefined
+    if (pendingRevealId === annotationId) {
+      pendingRevealId = undefined
+      pendingRevealAnnotation = undefined
+    }
   }
   const handler = (event: Event): void => deliver((event as CustomEvent<string>).detail)
   document.addEventListener(REVEAL_EVENT, handler)
@@ -41,7 +52,14 @@ const subscribeAnnotationRevealPreparation = (
 ): (() => void) => {
   const handler = (event: Event): void => listener((event as CustomEvent<Annotation>).detail)
   document.addEventListener(REVEAL_PREPARE_EVENT, handler)
+  if (pendingRevealAnnotation) listener(pendingRevealAnnotation)
   return () => document.removeEventListener(REVEAL_PREPARE_EVENT, handler)
+}
+
+const retryPendingAnnotationReveal = (): void => {
+  if (pendingRevealId) {
+    document.dispatchEvent(new CustomEvent(REVEAL_EVENT, { detail: pendingRevealId }))
+  }
 }
 
 const fileSourceMatchesItem = (annotation: Annotation, item: PreviewFileItem): boolean => {
@@ -88,8 +106,7 @@ const createAnnotationPreviewItem = (annotation: Annotation): PreviewFileItem | 
 
 const requestAnnotationReveal = (annotation: Annotation): void => {
   if (annotation.source.kind === 'agent-message' || annotation.source.kind === 'session-item') {
-    document.dispatchEvent(new CustomEvent(REVEAL_PREPARE_EVENT, { detail: annotation }))
-    publishAnnotationReveal(annotation.id)
+    publishAnnotationReveal(annotation)
     return
   }
 
@@ -101,7 +118,7 @@ const requestAnnotationReveal = (annotation: Annotation): void => {
   if (!item) return
 
   workbench.upsertAndActivateItem(item)
-  publishAnnotationReveal(annotation.id)
+  publishAnnotationReveal(annotation)
 }
 
 const revealTextAnnotationRange = (range: Range): void => {
@@ -123,6 +140,7 @@ const revealTextAnnotationRange = (range: Range): void => {
 
 export {
   requestAnnotationReveal,
+  retryPendingAnnotationReveal,
   revealTextAnnotationRange,
   subscribeAnnotationReveal,
   subscribeAnnotationRevealPreparation

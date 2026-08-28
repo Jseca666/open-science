@@ -8,11 +8,17 @@ import { cn } from '@/lib/utils'
 import type { PreviewFileSource } from '@/stores/preview-workbench-store'
 
 import { PreviewErrorCard, PreviewLoadingContent } from '../PreviewFallback'
+import {
+  retryPendingAnnotationReveal,
+  subscribeAnnotationRevealPreparation
+} from '../../annotations/annotation-reveal'
 import { createManagedPdfLoadingTask } from '../managed-pdf-document'
+import { pdfjsLib } from '../pdfjs'
 import { isUnavailableFileError } from '../preview-errors'
 import { createPreviewResourceKey } from '../preview-resource-key'
 import { createPreviewRequestScope } from '../preview-file-reader'
 import type { PreviewFileRendererProps } from '../preview-types'
+import { PreviewTextAnnotationSurface } from '../PreviewTextAnnotationSurface'
 import { useNearViewport } from '../useNearViewport'
 
 type PdfDocument = Awaited<ReturnType<typeof createManagedPdfLoadingTask>['promise']>
@@ -99,16 +105,20 @@ const PdfPageCanvas = ({
   document,
   pageNumber,
   pageWidth,
-  registerDisposer
+  registerDisposer,
+  annotationProps
 }: {
   document: PdfDocument
   pageNumber: number
   pageWidth: number
   registerDisposer: (dispose: () => void) => () => void
+  annotationProps?: PreviewFileRendererProps
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const [setNearViewportRef, isNearViewport] = useNearViewport<HTMLDivElement>()
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
+  const textLayerContainerRef = useRef<HTMLDivElement | null>(null)
+  const textLayerRef = useRef<InstanceType<typeof pdfjsLib.TextLayer> | undefined>(undefined)
   const pageRef = useRef<Awaited<ReturnType<PdfDocument['getPage']>> | undefined>(undefined)
   const renderTaskRef = useRef<
     ReturnType<Awaited<ReturnType<PdfDocument['getPage']>>['render']> | undefined
@@ -132,6 +142,8 @@ const PdfPageCanvas = ({
       canceled = true
       renderTaskRef.current?.cancel()
       renderTaskRef.current = undefined
+      textLayerRef.current?.cancel()
+      textLayerRef.current = undefined
       pageRef.current?.cleanup()
       pageRef.current = undefined
       const canvas = canvasRef.current
@@ -231,7 +243,70 @@ const PdfPageCanvas = ({
     }
   }, [isNearViewport, pageEpoch, pageNumber, pageWidth])
 
+  useEffect(() => {
+    const page = pageRef.current
+    const container = textLayerContainerRef.current
+    if (!isNearViewport || !page || !container || typeof page.getTextContent !== 'function') {
+      return
+    }
+
+    let canceled = false
+    const renderText = async (): Promise<void> => {
+      textLayerRef.current?.cancel()
+      textLayerRef.current = undefined
+      container.replaceChildren()
+      const baseViewport = page.getViewport({ scale: 1 })
+      const targetWidth = pageWidth > 0 ? pageWidth : baseViewport.width
+      const viewport = page.getViewport({ scale: targetWidth / baseViewport.width })
+      const textContentSource = await page.getTextContent()
+      if (canceled || pageRef.current !== page) return
+      const textLayer = new pdfjsLib.TextLayer({ textContentSource, container, viewport })
+      textLayerRef.current = textLayer
+      await textLayer.render()
+      if (textLayerRef.current === textLayer) textLayerRef.current = undefined
+      retryPendingAnnotationReveal()
+    }
+
+    void renderText().catch((error: unknown) => {
+      if (!canceled && !isRenderCancel(error)) {
+        console.error(`Failed to render PDF text layer for page ${pageNumber}`, error)
+      }
+    })
+    return () => {
+      canceled = true
+      textLayerRef.current?.cancel()
+      textLayerRef.current = undefined
+      container.replaceChildren()
+    }
+  }, [isNearViewport, pageEpoch, pageNumber, pageWidth])
+
   const displayedStatus = isNearViewport ? status : 'idle'
+
+  const pageContent = (
+    <>
+      {displayedStatus === 'loading' || (displayedStatus === 'idle' && isNearViewport) ? (
+        <div className="absolute inset-0">
+          <PreviewLoadingContent compact />
+        </div>
+      ) : null}
+      {displayedStatus === 'error' ? (
+        <div className="absolute inset-0 flex items-center justify-center text-[12px] text-text-300">
+          {t('Page {{page}} could not be rendered', { page: pageNumber })}
+        </div>
+      ) : null}
+      {isNearViewport ? (
+        <>
+          <canvas
+            ref={canvasRef}
+            width={0}
+            height={0}
+            className="pointer-events-none block size-full object-contain"
+          />
+          <div ref={textLayerContainerRef} className="pdf-text-layer" data-pdf-text-layer="true" />
+        </>
+      ) : null}
+    </>
+  )
 
   return (
     <div
@@ -245,19 +320,13 @@ const PdfPageCanvas = ({
       style={pageWidth > 0 ? { aspectRatio, width: pageWidth } : { aspectRatio }}
       data-page-number={pageNumber}
     >
-      {displayedStatus === 'loading' || (displayedStatus === 'idle' && isNearViewport) ? (
-        <div className="absolute inset-0">
-          <PreviewLoadingContent compact />
-        </div>
-      ) : null}
-      {displayedStatus === 'error' ? (
-        <div className="absolute inset-0 flex items-center justify-center text-[12px] text-text-300">
-          {t('Page {{page}} could not be rendered', { page: pageNumber })}
-        </div>
-      ) : null}
-      {isNearViewport ? (
-        <canvas ref={canvasRef} width={0} height={0} className="block size-full object-contain" />
-      ) : null}
+      {annotationProps ? (
+        <PreviewTextAnnotationSurface {...annotationProps} sourcePageNumber={pageNumber}>
+          {pageContent}
+        </PreviewTextAnnotationSurface>
+      ) : (
+        pageContent
+      )}
     </div>
   )
 }
@@ -271,7 +340,8 @@ export const PdfPreviewContent = ({
   mimeType,
   size,
   mtimeMs,
-  onReadingPositionChange
+  onReadingPositionChange,
+  annotationProps
 }: {
   path: string
   name: string
@@ -282,6 +352,7 @@ export const PdfPreviewContent = ({
   size?: number
   mtimeMs?: number
   onReadingPositionChange?: PreviewFileRendererProps['onPdfReadingPositionChange']
+  annotationProps?: PreviewFileRendererProps
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const requestKey = createPreviewResourceKey({
@@ -483,6 +554,26 @@ export const PdfPreviewContent = ({
     }
   }, [onReadingPositionChange, pageCount, pageWidth])
 
+  useEffect(() => {
+    const item = annotationProps?.item
+    const scroll = scrollRef.current
+    if (!item || !scroll) return
+    return subscribeAnnotationRevealPreparation((annotation) => {
+      if (
+        annotation.kind !== 'text' ||
+        annotation.source.kind !== 'project-file' ||
+        annotation.source.pageNumber === undefined ||
+        annotation.source.projectId !== item.projectId ||
+        annotation.source.path !== item.path
+      ) {
+        return
+      }
+      scroll
+        .querySelector<HTMLElement>(`[data-page-number="${annotation.source.pageNumber}"]`)
+        ?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    })
+  }, [annotationProps?.item])
+
   if (hasError) {
     return (
       <PreviewErrorCard
@@ -532,6 +623,7 @@ export const PdfPreviewContent = ({
                 pageNumber={index + 1}
                 pageWidth={pageWidth}
                 registerDisposer={registerPageDisposer}
+                annotationProps={annotationProps}
               />
             ))}
           </div>
@@ -549,19 +641,17 @@ export const PdfPreviewContent = ({
   )
 }
 
-export const PdfPreviewRenderer = ({
-  item,
-  onPdfReadingPositionChange
-}: PreviewFileRendererProps): React.JSX.Element => (
+export const PdfPreviewRenderer = (props: PreviewFileRendererProps): React.JSX.Element => (
   <PdfPreviewContent
-    path={item.path}
-    name={item.name}
-    source={item.source}
-    projectId={item.projectId}
-    sessionId={item.sessionId}
-    mimeType={item.mimeType}
-    size={item.size}
-    mtimeMs={item.mtimeMs}
-    onReadingPositionChange={onPdfReadingPositionChange}
+    path={props.item.path}
+    name={props.item.name}
+    source={props.item.source}
+    projectId={props.item.projectId}
+    sessionId={props.item.sessionId}
+    mimeType={props.item.mimeType}
+    size={props.item.size}
+    mtimeMs={props.item.mtimeMs}
+    onReadingPositionChange={props.onPdfReadingPositionChange}
+    annotationProps={props}
   />
 )

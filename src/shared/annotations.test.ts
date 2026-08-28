@@ -141,6 +141,54 @@ describe('annotations', () => {
     )
   })
 
+  it('keeps PDF page identity with a selected quote in Agent context', () => {
+    const annotation = textAnnotation({
+      source: {
+        kind: 'project-file',
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        path: 'upload-version:project-1/session-1/version-7',
+        name: 'paper.pdf',
+        versionId: 'version-7',
+        pageNumber: 4
+      }
+    })
+
+    const sanitized = sanitizeAnnotations([annotation])
+
+    expect(sanitized).toEqual([annotation])
+    expect(annotationPayloadText(sanitized)).toBe(
+      '[Annotations]\n' +
+        JSON.stringify({
+          items: [
+            {
+              type: 'quote',
+              content: 'The confidence intervals overlap.',
+              source: { kind: 'pdf', versionId: 'version-7', name: 'paper.pdf', page: 4 }
+            }
+          ]
+        })
+    )
+    expect(parseSideChatAnnotationText(sideChatAnnotationText('', sanitized))).toEqual({
+      text: '',
+      items: [
+        {
+          type: 'quote',
+          content: 'The confidence intervals overlap.',
+          source: { kind: 'pdf', versionId: 'version-7', name: 'paper.pdf', page: 4 }
+        }
+      ]
+    })
+    expect(
+      sanitizeAnnotations([
+        {
+          ...annotation,
+          source: { ...annotation.source, pageNumber: 0 }
+        }
+      ])
+    ).toEqual([])
+  })
+
   it('sanitizes and serializes a Session item text annotation', () => {
     const annotation = textAnnotation({
       source: {

@@ -359,6 +359,41 @@ describe('AnnotationCards image projection', () => {
     expect(labels).toEqual(['Prefer this annotation label', 'Compare this sentence.'])
   })
 
+  it('shows the PDF page in the annotation source label', async () => {
+    await act(async () =>
+      root.render(
+        <AnnotationDraftCards
+          annotations={[
+            {
+              id: 'pdf-quote',
+              kind: 'text',
+              target: 'agent',
+              quote: 'Evidence from the paper.',
+              source: {
+                kind: 'project-file',
+                projectId: 'project-1',
+                sessionId: 'session-1',
+                path: 'upload-version:project-1/session-1/version-1',
+                name: 'paper.pdf',
+                versionId: 'version-1',
+                pageNumber: 6
+              }
+            }
+          ]}
+          disabled={false}
+          onUpdateNote={vi.fn()}
+          onRemove={vi.fn()}
+        />
+      )
+    )
+
+    expect(
+      container
+        .querySelector('[data-annotation-hover-label]')
+        ?.getAttribute('data-annotation-hover-label')
+    ).toContain('paper.pdf · Page 6')
+  })
+
   it('activates an existing file preview before revealing its image pin', async () => {
     usePreviewWorkbenchStore.getState().activateProject('project-1')
     usePreviewWorkbenchStore.getState().upsertItem({

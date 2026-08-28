@@ -34,7 +34,10 @@ const annotationSourceLabel = (annotation: Annotation, t: TFunction): string => 
   if (annotation.source.kind === 'session-item') {
     return sessionItemSourceLabel(annotation.source.itemType, t)
   }
-  return annotation.source.name ?? annotation.source.path ?? t('Project File')
+  const label = annotation.source.name ?? annotation.source.path ?? t('Project File')
+  return annotation.source.pageNumber === undefined
+    ? label
+    : `${label} · ${t('Page {{page}}', { page: annotation.source.pageNumber })}`
 }
 
 const sentAnnotationViews = (

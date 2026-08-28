@@ -34,6 +34,7 @@ export type TextAnnotationSource =
       name?: string
       versionId?: string
       sessionId?: string
+      pageNumber?: number
     }>
   | Readonly<{
       kind: 'session-item'
@@ -103,7 +104,12 @@ export type PreparedAnnotationsForAgent = Readonly<{
 }>
 
 export type SideChatAnnotationItem =
-  | Readonly<{ type: 'quote'; content: string; instruction?: string }>
+  | Readonly<{
+      type: 'quote'
+      content: string
+      source?: Readonly<{ kind: 'pdf'; versionId: string; name: string; page: number }>
+      instruction?: string
+    }>
   | Readonly<{
       type: 'image-point'
       source:
@@ -148,13 +154,27 @@ const sanitizeTextSource = (value: unknown): TextAnnotationSource | undefined =>
     const projectId = trimmed(value.projectId)
     const path = trimmed(value.path)
     if (!projectId || !path) return undefined
+    const name = trimmed(value.name)
+    const versionId = trimmed(value.versionId)
+    const pageNumber = value.pageNumber
+    if (
+      pageNumber !== undefined &&
+      (typeof pageNumber !== 'number' ||
+        !Number.isInteger(pageNumber) ||
+        pageNumber < 1 ||
+        !name ||
+        !versionId)
+    ) {
+      return undefined
+    }
     return {
       kind,
       projectId,
       path,
-      ...(trimmed(value.name) ? { name: trimmed(value.name) } : {}),
-      ...(trimmed(value.versionId) ? { versionId: trimmed(value.versionId) } : {}),
-      ...(trimmed(value.sessionId) ? { sessionId: trimmed(value.sessionId) } : {})
+      ...(name ? { name } : {}),
+      ...(versionId ? { versionId } : {}),
+      ...(trimmed(value.sessionId) ? { sessionId: trimmed(value.sessionId) } : {}),
+      ...(pageNumber !== undefined ? { pageNumber } : {})
     }
   }
   if (kind === 'session-item') {
@@ -365,7 +385,7 @@ const payloadItem = (
   annotation: Annotation,
   imagePoints: ReadonlyMap<string, PreparedImagePoint>
 ):
-  | Readonly<{ type: 'quote'; content: string; instruction?: string }>
+  | Extract<SideChatAnnotationItem, Readonly<{ type: 'quote' }>>
   | Readonly<{
       type: 'image-point'
       source:
@@ -386,9 +406,22 @@ const payloadItem = (
       instruction: string
     }> => {
   if (annotation.kind === 'text') {
+    const pdfSource =
+      annotation.source.kind === 'project-file' &&
+      annotation.source.pageNumber !== undefined &&
+      annotation.source.versionId &&
+      annotation.source.name
+        ? {
+            kind: 'pdf' as const,
+            versionId: annotation.source.versionId,
+            name: annotation.source.name,
+            page: annotation.source.pageNumber
+          }
+        : undefined
     return {
       type: 'quote',
       content: annotation.quote,
+      ...(pdfSource ? { source: pdfSource } : {}),
       ...(annotation.note ? { instruction: annotation.note } : {})
     }
   }
@@ -458,8 +491,13 @@ const hasExactKeys = (value: Record<string, unknown>, keys: readonly string[]): 
 const sideChatAnnotationItem = (value: unknown): SideChatAnnotationItem | undefined => {
   if (!isRecord(value)) return undefined
   if (value.type === 'quote') {
-    const keys =
-      value.instruction === undefined ? ['type', 'content'] : ['type', 'content', 'instruction']
+    const keys = [
+      'type',
+      'content',
+      ...(value.source === undefined ? [] : ['source']),
+      ...(value.instruction === undefined ? [] : ['instruction'])
+    ]
+    const source = value.source
     if (
       !hasExactKeys(value, keys) ||
       typeof value.content !== 'string' ||
@@ -468,7 +506,18 @@ const sideChatAnnotationItem = (value: unknown): SideChatAnnotationItem | undefi
       (value.instruction !== undefined &&
         (typeof value.instruction !== 'string' ||
           !value.instruction ||
-          value.instruction.length > ANNOTATION_LIMITS.note))
+          value.instruction.length > ANNOTATION_LIMITS.note)) ||
+      (source !== undefined &&
+        (!isRecord(source) ||
+          !hasExactKeys(source, ['kind', 'versionId', 'name', 'page']) ||
+          source.kind !== 'pdf' ||
+          typeof source.versionId !== 'string' ||
+          !source.versionId ||
+          typeof source.name !== 'string' ||
+          !source.name ||
+          typeof source.page !== 'number' ||
+          !Number.isInteger(source.page) ||
+          source.page < 1))
     ) {
       return undefined
     }
