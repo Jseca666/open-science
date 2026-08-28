@@ -1,6 +1,7 @@
 import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import type { PrismaClient } from '@prisma/client'
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 
 // classifyDataRoot now derives the target via storage-root's dataRootForParent, so migration-service
@@ -36,6 +37,39 @@ import {
 import { withDataRootWrite } from './migration-state'
 import { operationJournalPath, RuntimeOperationJournal } from '../notebook/operation-journal'
 import type { Logger } from '../logger'
+import { MIGRATION_MANIFEST } from '../database/migration-service'
+import { applySqliteMigrationOperations } from '../database/sqlite-schema-migrations'
+import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
+
+const createDatabaseBeforeFileArtifactConstraints = async (client: PrismaClient): Promise<void> => {
+  const migrationIndex = MIGRATION_MANIFEST.findIndex(
+    (migration) => migration.id === '0017_file_artifact_data_constraints'
+  )
+  if (migrationIndex < 0) throw new Error('Missing file and Artifact constraints migration.')
+  const prefix = MIGRATION_MANIFEST.slice(0, migrationIndex)
+  for (const migration of prefix) {
+    for (const statement of migration.statements) await client.$executeRawUnsafe(statement)
+    if ('operations' in migration) {
+      await client.$transaction((transaction) =>
+        applySqliteMigrationOperations(transaction, migration.operations)
+      )
+    }
+  }
+  await client.$executeRawUnsafe(`CREATE TABLE "_open_science_migrations" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "checksum" TEXT NOT NULL,
+    "appliedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "_open_science_migrations_checksum_check"
+      CHECK (length("checksum") = 64 AND "checksum" NOT GLOB '*[^0-9a-f]*')
+  )`)
+  for (const migration of prefix) {
+    await client.$executeRawUnsafe(
+      `INSERT INTO "_open_science_migrations" ("id", "checksum") VALUES (?, ?)`,
+      migration.id,
+      migration.checksum
+    )
+  }
+}
 
 // Writes a verified staging marker for `<parent>/OpenScience`, as a completed copy phase would have.
 const seedVerifiedMarker = async (
@@ -870,6 +904,77 @@ describe('runDataRootMigration (copy phase)', () => {
       })
     )
     expect(JSON.stringify(diagnosticRecords(logger))).not.toContain('unfinished Artifact staging')
+  })
+
+  it('relocates a legacy Message snapshot immediately after its database constraints upgrade', async () => {
+    const authorityRoot = join(currentParent, 'config')
+    const previousE2eRoot = process.env.OPEN_SCIENCE_E2E_STORAGE_ROOT
+    process.env.OPEN_SCIENCE_E2E_STORAGE_ROOT = authorityRoot
+    const client = createProjectDbClient(authorityRoot)
+    const snapshotId = 'snapshot-legacy'
+    const storageKey = `artifacts/project-1/session-1/.provenance/message-snapshots/${snapshotId}.json`
+    const payload = JSON.stringify({
+      schemaVersion: 2,
+      snapshotId,
+      rootFrameId: 'root-1',
+      agentFrameId: 'agent-1',
+      messageBranchId: 'branch-1',
+      terminalMessageId: 'message-1',
+      messages: [
+        {
+          id: 'message-1',
+          role: 'agent',
+          content: 'saved artifact',
+          createdAt: 1
+        }
+      ]
+    })
+
+    try {
+      await mkdir(authorityRoot, { recursive: true })
+      await mkdir(
+        join(currentDataRoot, 'artifacts/project-1/session-1/.provenance/message-snapshots'),
+        {
+          recursive: true
+        }
+      )
+      await writeFile(join(currentDataRoot, storageKey), payload)
+      await createDatabaseBeforeFileArtifactConstraints(client)
+      await client.fileOriginSession.create({
+        data: { projectId: 'project-1', sessionId: 'session-1' }
+      })
+      await client.artifactMessageSnapshot.create({
+        data: {
+          id: snapshotId,
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          rootFrameId: 'root-1',
+          agentFrameId: 'agent-1',
+          messageBranchId: 'branch-1',
+          terminalMessageId: 'message-1',
+          state: 'ready',
+          storageKey,
+          checksum: '',
+          messageCount: 1
+        }
+      })
+      await migrateApplicationDatabase(client)
+      await client.$disconnect()
+
+      const deps = fakeDeps()
+      const result = await runDataRootMigration(
+        { currentDataRoot, runtime: deps.runtime, notebook: deps.notebook },
+        emptyParent,
+        runOpts()
+      )
+
+      expect(result).toEqual({ ok: true })
+      expect(existsSync(join(dataRootFor(emptyParent), storageKey))).toBe(true)
+    } finally {
+      await client.$disconnect()
+      if (previousE2eRoot === undefined) delete process.env.OPEN_SCIENCE_E2E_STORAGE_ROOT
+      else process.env.OPEN_SCIENCE_E2E_STORAGE_ROOT = previousE2eRoot
+    }
   })
 
   it('diagnoses target provenance verification failure without retaining its error', async () => {

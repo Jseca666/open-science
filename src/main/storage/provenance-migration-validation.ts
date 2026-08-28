@@ -6,6 +6,7 @@ import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { validateConversationGraph } from '../../shared/conversation-graph'
 import { NOTEBOOK_RUN_FILE } from '../../shared/notebook'
 import { normalizeSessionFile } from '../../shared/session-persistence'
+import { ProvenanceMessageSnapshotRepository } from '../artifacts/provenance-message-snapshot'
 import { operationJournalPath, RuntimeOperationJournal } from '../notebook/operation-journal'
 import { createProjectDbClient } from '../projects/prisma-client'
 
@@ -541,6 +542,28 @@ const validateSqliteStore = async (dataRoot: string, authorityRoot: string): Pro
         }
       }
     }
+  } finally {
+    await client.$disconnect()
+  }
+}
+
+export const recoverLegacyMessageSnapshotsForMigration = async (
+  dataRoot: string,
+  authorityRoot: string
+): Promise<void> => {
+  const databasePath = join(authorityRoot, 'open-science.db')
+  if (!(await fileExists(databasePath))) return
+  const client = createProjectDbClient(authorityRoot)
+  try {
+    const table = await client.$queryRawUnsafe<Array<{ name: string }>>(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'ArtifactMessageSnapshot'"
+    )
+    if (table.length === 0) return
+    const snapshots = new ProvenanceMessageSnapshotRepository({
+      storageRoot: dataRoot,
+      getClient: async () => client
+    })
+    await snapshots.recoverLegacyMessageSnapshotsForMigration()
   } finally {
     await client.$disconnect()
   }

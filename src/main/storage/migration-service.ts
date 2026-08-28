@@ -31,7 +31,10 @@ import { waitForDataRootWriters } from './migration-state'
 import { DEFAULT_MAX_ENV_RELATIVE_PATH, PACK_PATH_BUDGET_FILE } from '../notebook/bundle-manifest'
 import { windowsDefaultEnvPrefixReserve } from '../notebook/runtime-paths'
 import { RELOCATABLE_DATA_DIRS } from './data-directories'
-import { validateProvenanceMigrationState } from './provenance-migration-validation'
+import {
+  recoverLegacyMessageSnapshotsForMigration,
+  validateProvenanceMigrationState
+} from './provenance-migration-validation'
 import { disconnectProjectDbClient } from '../projects/prisma-client'
 import { createLogger, type Logger } from '../logger'
 import { startDiagnosticOperation } from '../diagnostics/operation'
@@ -351,8 +354,11 @@ const RUNTIME_ENVIRONMENT_INVENTORY_DIR = join('runtime', 'provenance', 'environ
 export const PROJECT_DATABASE_FILE = 'open-science.db'
 const BASE_MIGRATION_DIRS = [...MIGRATED_DIRS, RUNTIME_ENVIRONMENT_MANIFESTS_DIR]
 
-const defaultValidateProvenanceState = (dataRoot: string): Promise<void> =>
-  validateProvenanceMigrationState(dataRoot, resolveConfigRoot())
+const defaultValidateProvenanceState = async (dataRoot: string): Promise<void> => {
+  const authorityRoot = resolveConfigRoot()
+  await recoverLegacyMessageSnapshotsForMigration(dataRoot, authorityRoot)
+  await validateProvenanceMigrationState(dataRoot, authorityRoot)
+}
 
 type MigrationInventory = NonNullable<MigrationMarker['inventory']>
 

@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 
-import type { PrismaClient } from '@prisma/client'
+import type { ArtifactMessageSnapshot, PrismaClient } from '@prisma/client'
 
 import {
   materializeSessionConversationGraph,
@@ -466,6 +466,14 @@ class ProvenanceMessageSnapshotRepository {
     })
   }
 
+  async recoverLegacyMessageSnapshotsForMigration(): Promise<void> {
+    const client = await this.options.getClient()
+    const staging = await client.artifactMessageSnapshot.findMany({
+      where: { state: 'staging', checksum: '' }
+    })
+    for (const snapshot of staging) await this.promoteStagingMessageSnapshot(snapshot)
+  }
+
   private async recoverStagingMessageSnapshots(): Promise<void> {
     const client = await this.options.getClient()
     const staging = await client.artifactMessageSnapshot.findMany({
@@ -473,40 +481,7 @@ class ProvenanceMessageSnapshotRepository {
     })
     for (const snapshot of staging) {
       try {
-        // Reuse the same immutable-file validation as normal reads. The temporary state override is
-        // local to validation; SQLite remains staging until the promotion transaction commits.
-        await this.verifyReadySnapshot(
-          { ...snapshot, state: 'ready' },
-          {
-            rootFrameId: snapshot.rootFrameId,
-            agentFrameId: snapshot.agentFrameId,
-            messageBranchId: snapshot.messageBranchId,
-            terminalMessageId: snapshot.terminalMessageId
-          },
-          'staging'
-        )
-        await client.$transaction(async (transaction) => {
-          const promoted = await transaction.artifactMessageSnapshot.updateMany({
-            where: { id: snapshot.id, state: 'staging' },
-            data: { state: 'ready' }
-          })
-          if (promoted.count !== 1) {
-            throw new Error(`Artifact Message snapshot recovery raced: ${snapshot.id}`)
-          }
-          await transaction.artifactVersion.updateMany({
-            where: {
-              state: 'finalized',
-              rootFrameId: snapshot.rootFrameId,
-              agentFrameId: snapshot.agentFrameId,
-              messageBranchId: snapshot.messageBranchId,
-              messageId: snapshot.terminalMessageId,
-              artifact: {
-                is: { projectId: snapshot.projectId, sessionId: snapshot.sessionId }
-              }
-            },
-            data: { messageSnapshotId: snapshot.id }
-          })
-        })
+        await this.promoteStagingMessageSnapshot(snapshot)
       } catch {
         const deleted = await client.artifactMessageSnapshot.deleteMany({
           where: { id: snapshot.id, state: 'staging' }
@@ -530,6 +505,42 @@ class ProvenanceMessageSnapshotRepository {
         ])
       }
     }
+  }
+
+  private async promoteStagingMessageSnapshot(snapshot: ArtifactMessageSnapshot): Promise<void> {
+    const client = await this.options.getClient()
+    // Reuse the same immutable-file validation as normal reads. The temporary state override is
+    // local to validation; SQLite remains staging until the promotion transaction commits.
+    await this.verifyReadySnapshot(
+      { ...snapshot, state: 'ready' },
+      {
+        rootFrameId: snapshot.rootFrameId,
+        agentFrameId: snapshot.agentFrameId,
+        messageBranchId: snapshot.messageBranchId,
+        terminalMessageId: snapshot.terminalMessageId
+      },
+      'staging'
+    )
+    await client.$transaction(async (transaction) => {
+      const promoted = await transaction.artifactMessageSnapshot.updateMany({
+        where: { id: snapshot.id, state: 'staging' },
+        data: { state: 'ready' }
+      })
+      if (promoted.count !== 1) {
+        throw new Error(`Artifact Message snapshot recovery raced: ${snapshot.id}`)
+      }
+      await transaction.artifactVersion.updateMany({
+        where: {
+          state: 'finalized',
+          rootFrameId: snapshot.rootFrameId,
+          agentFrameId: snapshot.agentFrameId,
+          messageBranchId: snapshot.messageBranchId,
+          messageId: snapshot.terminalMessageId,
+          artifact: { is: { projectId: snapshot.projectId, sessionId: snapshot.sessionId } }
+        },
+        data: { messageSnapshotId: snapshot.id }
+      })
+    })
   }
 
   private async recoverStagingReviewScopeSnapshots(): Promise<void> {
