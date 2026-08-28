@@ -43,7 +43,7 @@ import { createProjectDbClient, migrateApplicationDatabase } from '../projects/p
 
 const createDatabaseBeforeFileArtifactConstraints = async (client: PrismaClient): Promise<void> => {
   const migrationIndex = MIGRATION_MANIFEST.findIndex(
-    (migration) => migration.id === '0017_file_artifact_data_constraints'
+    (migration) => migration.id === '0018_file_artifact_data_constraints'
   )
   if (migrationIndex < 0) throw new Error('Missing file and Artifact constraints migration.')
   const prefix = MIGRATION_MANIFEST.slice(0, migrationIndex)

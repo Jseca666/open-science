@@ -94,7 +94,7 @@ describe('file and Artifact data constraints migration', () => {
     await expect(migrateApplicationDatabase(client, { databasePath })).resolves.toEqual({
       adoptedLegacy: false,
       applied: [MIGRATION_ID],
-      from: '0016_compute_job_sensitive_data_encryption',
+      from: '0017_agent_memory_project_scope',
       to: MIGRATION_ID
     })
     await expect(
@@ -151,7 +151,7 @@ describe('file and Artifact data constraints migration', () => {
       client.$queryRawUnsafe(
         `SELECT "id" FROM "_open_science_migrations" ORDER BY "id" DESC LIMIT 1`
       )
-    ).resolves.toEqual([{ id: '0016_compute_job_sensitive_data_encryption' }])
+    ).resolves.toEqual([{ id: '0017_agent_memory_project_scope' }])
     await expect(
       client.$queryRawUnsafe(`PRAGMA table_info("ManagedFileSessionSync")`)
     ).resolves.not.toEqual([expect.objectContaining({ name: 'isComplete' })])

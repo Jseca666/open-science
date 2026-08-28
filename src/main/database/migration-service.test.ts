@@ -1893,7 +1893,9 @@ describe('application database migrations', () => {
     await expect(client.project.count()).resolves.toBe(1)
 
     const backupClient = new PrismaClient({
-      datasources: { db: { url: `file:${fileArtifactConstraintsBackupPath.replaceAll('\\', '/')}` } }
+      datasources: {
+        db: { url: `file:${fileArtifactConstraintsBackupPath.replaceAll('\\', '/')}` }
+      }
     })
     try {
       await expect(
