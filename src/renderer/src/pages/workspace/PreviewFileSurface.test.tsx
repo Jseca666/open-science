@@ -541,6 +541,35 @@ describe('PreviewFileSurface PDF context action matrix', () => {
     window.removeEventListener(FOCUS_COMPOSER_EVENT, focusListener)
   })
 
+  it('offers the PDF context action from a right-click inside the preview', async () => {
+    selectPdfContextSession()
+    const { linkPdfContext } = installPdfContextApi()
+
+    await act(async () => {
+      root.render(<PreviewFileSurface item={pdfItem} onClose={vi.fn()} />)
+      await Promise.resolve()
+    })
+    const surface = container.querySelector('[data-testid="preview-file-content-surface"]')
+    act(() => {
+      surface?.dispatchEvent(
+        new MouseEvent('contextmenu', { bubbles: true, clientX: 80, clientY: 120 })
+      )
+    })
+    await act(async () => Promise.resolve())
+
+    expect(
+      document.body.querySelector('[data-testid="pdf-preview-context-menu"]')?.textContent
+    ).toContain('Read with agent')
+    await clickMenuItem('Read with agent')
+
+    expect(linkPdfContext).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      sessionId: 'active-session',
+      expectedRevision: 3,
+      sources: [{ sourceKind: 'artifact-version', sourceVersionId: 'version-1' }]
+    })
+  })
+
   it('keeps the overflow menu for provenance, without the PDF context entry', async () => {
     selectPdfContextSession()
     installPdfContextApi()

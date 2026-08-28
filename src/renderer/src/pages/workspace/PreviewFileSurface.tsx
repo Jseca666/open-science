@@ -466,6 +466,11 @@ const PreviewFileSurface = ({
   }>()
   const [lineageLoadState, setLineageLoadState] = useState<LineageLoadState>()
   const [lineageRetryToken, setLineageRetryToken] = useState(0)
+  const [pdfContextMenu, setPdfContextMenu] = useState<{
+    itemKey: string
+    x: number
+    y: number
+  }>()
   const projectId = usePreviewWorkbenchStore((state) => state.activeProjectId)
   const storedItem = usePreviewWorkbenchStore((state) =>
     state.items.find((candidate) => candidate.id === item.id)
@@ -523,6 +528,7 @@ const PreviewFileSurface = ({
     resolvedPreviewItem,
     onPdfContextError
   )
+  const pdfContextMenuItemKey = `${resolvedPreviewItem.id}:${selectedVersionId ?? ''}`
   const reportPdfReadingPosition = useCallback(
     (position: { pageNumber: number; pageCount: number }): void => {
       if (!readingContextBindingId) return
@@ -651,7 +657,25 @@ const PreviewFileSurface = ({
           onSelect={selectPreviewVersion}
         />
       ) : null}
-      <div className="min-h-0 flex-1 overflow-y-auto bg-bg-000">
+      <div
+        data-testid="preview-file-content-surface"
+        className="min-h-0 flex-1 overflow-y-auto bg-bg-000"
+        onContextMenu={(event) => {
+          if (
+            resolvedPreviewItem.format !== 'pdf' ||
+            !pdfContextAction ||
+            showProvenance ||
+            !renderContent
+          )
+            return
+          event.preventDefault()
+          setPdfContextMenu({
+            itemKey: pdfContextMenuItemKey,
+            x: event.clientX,
+            y: event.clientY
+          })
+        }}
+      >
         {showProvenance && projectId ? (
           <ArtifactProvenancePanel
             item={resolvedPreviewItem}
@@ -674,6 +698,43 @@ const PreviewFileSurface = ({
           />
         ) : null}
       </div>
+      {pdfContextMenu?.itemKey === pdfContextMenuItemKey && pdfContextAction ? (
+        <DropdownMenu
+          open
+          onOpenChange={(open) => {
+            if (!open) setPdfContextMenu(undefined)
+          }}
+        >
+          <DropdownMenuTrigger asChild>
+            <span
+              aria-hidden="true"
+              className="pointer-events-none fixed size-0"
+              style={{ left: pdfContextMenu.x, top: pdfContextMenu.y }}
+            />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent
+            align="start"
+            className="z-[70] min-w-40 p-1"
+            data-testid="pdf-preview-context-menu"
+            onCloseAutoFocus={(event) => event.preventDefault()}
+          >
+            <DropdownMenuItem
+              disabled={pdfContextAction.pending || pdfContextAction.disabled}
+              onSelect={() => {
+                setPdfContextMenu(undefined)
+                pdfContextAction.run()
+              }}
+            >
+              {pdfContextAction.state === 'remove' ? (
+                <Link2Off className="mr-2 size-4" aria-hidden="true" />
+              ) : (
+                <BookOpen className="mr-2 size-4" aria-hidden="true" />
+              )}
+              {pdfContextAction.label}
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      ) : null}
     </div>
   )
 }
