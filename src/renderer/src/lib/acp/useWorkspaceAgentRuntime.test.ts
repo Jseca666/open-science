@@ -28,6 +28,7 @@ import {
 } from '../../stores/preview-workbench-store'
 import { applyWorkspaceRuntimeEvent } from './workspace-events'
 import {
+  clearLinkedPendingPdfContext,
   createWorkspaceRuntimeEventProcessor,
   getResumeFailureMessage,
   markRunningSessionsDisconnectedOnDrop,
@@ -1876,6 +1877,113 @@ describe('workspace durable elicitation', () => {
 })
 
 describe('workspace agent message sending', () => {
+  it('clears only the pending PDF selection proven by the linked context', () => {
+    usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
+    const sentSelection = {
+      kind: 'staged-upload' as const,
+      attachmentId: 'upload-1',
+      previewItemId: 'upload:upload-1'
+    }
+    usePreviewWorkbenchStore.getState().setPendingPdfContext('project-1', sentSelection)
+    const replacementSelection = {
+      kind: 'version' as const,
+      sourceKind: 'artifact-version' as const,
+      sourceVersionId: 'version-2',
+      previewItemId: 'artifact:version-2'
+    }
+    usePreviewWorkbenchStore.getState().setPendingPdfContext('project-1', replacementSelection)
+
+    clearLinkedPendingPdfContext('project-1', sentSelection, {
+      version: 1,
+      bindings: [
+        {
+          version: 1,
+          bindingId: 'binding-1',
+          sourceKind: 'upload-version',
+          sourceFileId: 'upload-1',
+          sourceVersionId: 'version-1',
+          sourceSessionId: 'session-1',
+          name: 'paper.pdf',
+          mimeType: 'application/pdf',
+          sizeBytes: 42,
+          checksum: 'a'.repeat(64),
+          linkedAt: 1
+        }
+      ]
+    })
+
+    expect(usePreviewWorkbenchStore.getState().pendingPdfContextByProject['project-1']).toEqual(
+      replacementSelection
+    )
+  })
+
+  it('clears the exact staged PDF selection after its linked binding is committed', () => {
+    usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
+    const selection = {
+      kind: 'staged-upload' as const,
+      attachmentId: 'upload-1',
+      previewItemId: 'upload:upload-1'
+    }
+    usePreviewWorkbenchStore.getState().setPendingPdfContext('project-1', selection)
+
+    clearLinkedPendingPdfContext('project-1', selection, {
+      version: 1,
+      bindings: [
+        {
+          version: 1,
+          bindingId: 'binding-1',
+          sourceKind: 'upload-version',
+          sourceFileId: 'upload-1',
+          sourceVersionId: 'version-1',
+          sourceSessionId: 'session-1',
+          name: 'paper.pdf',
+          mimeType: 'application/pdf',
+          sizeBytes: 42,
+          checksum: 'a'.repeat(64),
+          linkedAt: 1
+        }
+      ]
+    })
+
+    expect(
+      usePreviewWorkbenchStore.getState().pendingPdfContextByProject['project-1']
+    ).toBeUndefined()
+  })
+
+  it('keeps a pending PDF selection when the committed context does not contain it', () => {
+    usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
+    const selection = {
+      kind: 'version' as const,
+      sourceKind: 'artifact-version' as const,
+      sourceVersionId: 'version-1',
+      previewItemId: 'artifact:version-1'
+    }
+    usePreviewWorkbenchStore.getState().setPendingPdfContext('project-1', selection)
+
+    clearLinkedPendingPdfContext('project-1', selection, {
+      version: 1,
+      bindings: [
+        {
+          version: 1,
+          bindingId: 'binding-2',
+          sourceKind: 'artifact-version',
+          sourceFileId: 'artifact-2',
+          sourceVersionId: 'version-2',
+          sourceSessionId: 'session-1',
+          name: 'other-paper.pdf',
+          mimeType: 'application/pdf',
+          sizeBytes: 42,
+          checksum: 'b'.repeat(64),
+          linkedAt: 1
+        }
+      ]
+    })
+
+    expect(usePreviewWorkbenchStore.getState().pendingPdfContextByProject['project-1']).toEqual(
+      selection
+    )
+  })
+
   it('reveals a PDF only after its Session context link completes', () => {
     usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
     const pdfContext: SessionPdfContext = {
@@ -3451,6 +3559,81 @@ describe('workspace agent message sending', () => {
       'plan-first',
       true
     )
+  })
+
+  it('relinks the captured PDF context before dispatching a branched Session', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'source-session',
+      content: 'Inspect the paper',
+      cwd: '/workspace/project',
+      projectId: 'project-1'
+    })
+    useSessionStore.getState().finishRun('source-session')
+    const pdfContext: SessionPdfContext = {
+      version: 1,
+      bindings: [
+        {
+          version: 1,
+          bindingId: 'source-binding',
+          sourceKind: 'artifact-version',
+          sourceFileId: 'artifact-1',
+          sourceVersionId: 'version-1',
+          sourceSessionId: 'source-session',
+          name: 'paper.pdf',
+          mimeType: 'application/pdf',
+          sizeBytes: 42,
+          checksum: 'a'.repeat(64),
+          linkedAt: 1
+        }
+      ]
+    }
+    const branchedPdfContext: SessionPdfContext = {
+      ...pdfContext,
+      bindings: [{ ...pdfContext.bindings[0], bindingId: 'branched-binding' }]
+    }
+    const saveSession = vi.fn(async (session: PersistedChatSession) => ({
+      ...session,
+      runtimeContext: { version: 1 as const, revision: 3 }
+    }))
+    const linkPdfContext = vi.fn().mockResolvedValue({
+      version: 1,
+      revision: 4,
+      pdfContext: branchedPdfContext
+    })
+    vi.stubGlobal('window', { api: { sessions: { saveSession, linkPdfContext } } })
+    const runtime = {
+      state: createSnapshot(['source-session']),
+      createSession: vi.fn().mockResolvedValue({
+        sessionId: 'branched-runtime-session',
+        cwd: '/workspace/project'
+      }),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['branched-runtime-session']))
+    }
+
+    await sendWorkspaceMessage(runtime, {
+      branchSourceSessionId: 'source-session',
+      text: 'Try a different interpretation',
+      pdfContext
+    })
+    await vi.waitFor(() => expect(runtime.sendPrompt).toHaveBeenCalledOnce())
+
+    expect(linkPdfContext).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      sessionId: 'branched-runtime-session',
+      expectedRevision: 3,
+      sources: [{ sourceKind: 'artifact-version', sourceVersionId: 'version-1' }],
+      excludeSinglePage: true
+    })
+    expect(runtime.sendPrompt.mock.calls[0]?.[4]).toEqual([
+      expect.objectContaining({
+        id: 'artifact-1',
+        source: 'artifact',
+        versionId: 'version-1',
+        mimeType: 'application/pdf'
+      })
+    ])
   })
 
   it('creates and persists an idle branched Session without sending a prompt', async () => {

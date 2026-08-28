@@ -140,6 +140,7 @@ type PreviewWorkbenchStore = PreviewWorkbenchStoreData & {
     projectId: string,
     selection: PendingPdfContextSelection | undefined
   ) => void
+  clearPendingPdfContext: (projectId: string, selection: PendingPdfContextSelection) => void
   setDraftStagedUploadIds: (ids: string[]) => void
   setPdfReadingPosition: (bindingId: string, position: PdfReadingPosition) => void
   clearPdfReadingPosition: (bindingId: string) => void
@@ -447,20 +448,9 @@ export const usePreviewWorkbenchStore = create<PreviewWorkbenchStore>((set, get)
         byProject[projectId] = { ...slice, items: reconciledItems }
       }
 
-      const finalizedIds = new Set(uploads.map((upload) => upload.id))
-      const pendingPdfContextByProject = Object.fromEntries(
-        Object.entries(state.pendingPdfContextByProject).filter(([, selection]) =>
-          selection.kind === 'staged-upload' ? !finalizedIds.has(selection.attachmentId) : true
-        )
-      )
-      const pendingContextChanged =
-        Object.keys(pendingPdfContextByProject).length !==
-        Object.keys(state.pendingPdfContextByProject).length
+      if (items === state.items && byProject === state.byProject) return state
 
-      if (items === state.items && byProject === state.byProject && !pendingContextChanged)
-        return state
-
-      return { items, byProject, pendingPdfContextByProject }
+      return { items, byProject }
     })
   },
 
@@ -471,6 +461,16 @@ export const usePreviewWorkbenchStore = create<PreviewWorkbenchStore>((set, get)
       const pendingPdfContextByProject = { ...state.pendingPdfContextByProject }
       if (selection) pendingPdfContextByProject[projectId] = selection
       else delete pendingPdfContextByProject[projectId]
+      return { pendingPdfContextByProject }
+    })
+  },
+
+  clearPendingPdfContext: (projectId, selection) => {
+    set((state) => {
+      const current = state.pendingPdfContextByProject[projectId]
+      if (JSON.stringify(current) !== JSON.stringify(selection)) return state
+      const pendingPdfContextByProject = { ...state.pendingPdfContextByProject }
+      delete pendingPdfContextByProject[projectId]
       return { pendingPdfContextByProject }
     })
   },
