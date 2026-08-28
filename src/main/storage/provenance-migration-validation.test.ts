@@ -2,14 +2,48 @@ import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+
+import type { PrismaClient } from '@prisma/client'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { validateProvenanceMigrationState } from './provenance-migration-validation'
+import { MIGRATION_MANIFEST } from '../database/migration-service'
+import { applySqliteMigrationOperations } from '../database/sqlite-schema-migrations'
 import { operationJournalPath, RuntimeOperationJournal } from '../notebook/operation-journal'
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 
 let root: string
 const sha256 = (value: string | Buffer): string => createHash('sha256').update(value).digest('hex')
+
+const createDatabaseBeforeFileArtifactConstraints = async (client: PrismaClient): Promise<void> => {
+  const migrationIndex = MIGRATION_MANIFEST.findIndex(
+    (migration) => migration.id === '0017_file_artifact_data_constraints'
+  )
+  if (migrationIndex < 0) throw new Error('Missing file and Artifact constraints migration.')
+  const prefix = MIGRATION_MANIFEST.slice(0, migrationIndex)
+  for (const migration of prefix) {
+    for (const statement of migration.statements) await client.$executeRawUnsafe(statement)
+    if ('operations' in migration) {
+      await client.$transaction((transaction) =>
+        applySqliteMigrationOperations(transaction, migration.operations)
+      )
+    }
+  }
+  await client.$executeRawUnsafe(`CREATE TABLE "_open_science_migrations" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "checksum" TEXT NOT NULL,
+    "appliedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "_open_science_migrations_checksum_check"
+      CHECK (length("checksum") = 64 AND "checksum" NOT GLOB '*[^0-9a-f]*')
+  )`)
+  for (const migration of prefix) {
+    await client.$executeRawUnsafe(
+      `INSERT INTO "_open_science_migrations" ("id", "checksum") VALUES (?, ?)`,
+      migration.id,
+      migration.checksum
+    )
+  }
+}
 
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), 'open-science-provenance-migration-'))
@@ -371,7 +405,7 @@ describe('validateProvenanceMigrationState', () => {
       mkdir(dataRoot, { recursive: true })
     ])
     const client = createProjectDbClient(authorityRoot)
-    await migrateApplicationDatabase(client)
+    await createDatabaseBeforeFileArtifactConstraints(client)
     await client.fileOriginSession.create({
       data: { projectId: 'project-1', sessionId: 'session-1' }
     })
