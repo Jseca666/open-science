@@ -2,6 +2,7 @@ import {
   BookOpen,
   ChevronLeft,
   ChevronRight,
+  Download,
   Eye,
   GitBranch,
   Link2,
@@ -612,6 +613,18 @@ const PreviewFileSurface = ({
     // navigation that never happened.
     if (opened) onViewInContextNavigate?.()
   }
+  const downloadPreviewFile = (): void => {
+    setPdfContextMenu(undefined)
+    void window.api
+      .saveManagedFile({
+        source: resolvedPreviewItem.source ?? 'artifact',
+        path: resolvedPreviewItem.path,
+        suggestedName: resolvedPreviewItem.name
+      })
+      .catch((error: unknown) => {
+        console.error(`Failed to download ${resolvedPreviewItem.name} from the PDF preview`, error)
+      })
+  }
 
   return (
     <div className="flex size-full min-h-0 flex-col overflow-hidden">
@@ -714,11 +727,12 @@ const PreviewFileSurface = ({
           </DropdownMenuTrigger>
           <DropdownMenuContent
             align="start"
-            className="z-[70] min-w-40 p-1"
+            className="z-[70] min-w-[9.5rem] p-1"
             data-testid="pdf-preview-context-menu"
             onCloseAutoFocus={(event) => event.preventDefault()}
           >
             <DropdownMenuItem
+              className="min-h-0 h-6 gap-2 rounded-md px-2 py-0 text-[12px]"
               disabled={pdfContextAction.pending || pdfContextAction.disabled}
               onSelect={() => {
                 setPdfContextMenu(undefined)
@@ -726,11 +740,19 @@ const PreviewFileSurface = ({
               }}
             >
               {pdfContextAction.state === 'remove' ? (
-                <Link2Off className="mr-2 size-4" aria-hidden="true" />
+                <Link2Off className="size-3.5 shrink-0" aria-hidden="true" />
               ) : (
-                <BookOpen className="mr-2 size-4" aria-hidden="true" />
+                <BookOpen className="size-3.5 shrink-0" aria-hidden="true" />
               )}
               {pdfContextAction.label}
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              className="min-h-0 h-6 gap-2 rounded-md px-2 py-0 text-[12px]"
+              onSelect={downloadPreviewFile}
+            >
+              <Download className="size-3.5 shrink-0" aria-hidden="true" />
+              {t('Download')}
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

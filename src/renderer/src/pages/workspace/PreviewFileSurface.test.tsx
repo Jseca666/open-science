@@ -557,9 +557,11 @@ describe('PreviewFileSurface PDF context action matrix', () => {
     })
     await act(async () => Promise.resolve())
 
-    expect(
-      document.body.querySelector('[data-testid="pdf-preview-context-menu"]')?.textContent
-    ).toContain('Read with agent')
+    const menu = document.body.querySelector('[data-testid="pdf-preview-context-menu"]')
+    expect(menu?.textContent).toContain('Read with agent')
+    expect(menu?.textContent).toContain('Download')
+    expect(menu?.className).toContain('min-w-[9.5rem]')
+    expect(menu?.querySelector('[role="menuitem"]')?.className).toContain('h-6')
     await clickMenuItem('Read with agent')
 
     expect(linkPdfContext).toHaveBeenCalledWith({
@@ -567,6 +569,31 @@ describe('PreviewFileSurface PDF context action matrix', () => {
       sessionId: 'active-session',
       expectedRevision: 3,
       sources: [{ sourceKind: 'artifact-version', sourceVersionId: 'version-1' }]
+    })
+  })
+
+  it('downloads the PDF from its preview context menu', async () => {
+    selectPdfContextSession()
+    installPdfContextApi()
+    window.api.saveManagedFile = vi.fn().mockResolvedValue({ saved: true })
+    window.api.artifacts.getLineage = vi.fn().mockResolvedValue(undefined)
+
+    await act(async () => {
+      root.render(<PreviewFileSurface item={pdfItem} onClose={vi.fn()} />)
+      await Promise.resolve()
+    })
+    act(() => {
+      container
+        .querySelector('[data-testid="preview-file-content-surface"]')
+        ?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 80, clientY: 120 }))
+    })
+    await act(async () => Promise.resolve())
+    await clickMenuItem('Download')
+
+    expect(window.api.saveManagedFile).toHaveBeenCalledWith({
+      source: 'artifact',
+      path: 'artifact-version:project-1/session-1/artifact-1/version-1',
+      suggestedName: 'paper.pdf'
     })
   })
 
