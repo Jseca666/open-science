@@ -347,12 +347,25 @@ export const validateDurableMessageOwnership = (
       'Artifact finalization message is not durable yet.'
     )
   }
+  const finalRuntimeSegment = graph.runtimeSegments.find(
+    (candidate) =>
+      candidate.id === finalMessage.runtimeSegmentId &&
+      candidate.agentFrameId === context.agentFrameId
+  )
+  const continuesPromptAcrossRuntimeSegment =
+    finalMessage.runtimeSegmentId !== context.runtimeSegmentId &&
+    finalMessage.responseToMessageId === context.promptMessageId &&
+    finalRuntimeSegment !== undefined &&
+    finalRuntimeSegment.startedAt >= segment.startedAt
   if (
     finalIndex <= promptIndex ||
     finalMessage.role !== 'agent' ||
+    finalMessage.status !== 'complete' ||
     finalMessage.agentFrameId !== context.agentFrameId ||
     finalMessage.introducedOnBranchId !== context.messageBranchId ||
-    finalMessage.runtimeSegmentId !== context.runtimeSegmentId
+    !finalRuntimeSegment ||
+    (finalMessage.runtimeSegmentId !== context.runtimeSegmentId &&
+      !continuesPromptAcrossRuntimeSegment)
   ) {
     throw new ArtifactFinalizationProofError(
       'message-ownership-mismatch',
