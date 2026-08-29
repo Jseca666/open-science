@@ -5350,6 +5350,49 @@ describe('SettingsService: Subagent model', () => {
     })
   })
 
+  it('rejects an inherited backend identity from a different Agent Framework', async () => {
+    const service = createService()
+    await service.setSubagentModel({ mode: 'inherit' })
+
+    await expect(
+      service.resolveSubagentExecutionModel('codex', {
+        backendId: 'claude-code:provider-a',
+        modelRoute: 'codex-responses',
+        model: 'gpt-5.6-sol'
+      })
+    ).rejects.toThrow('no complete Main Agent runtime model')
+  })
+
+  it('rejects inherited identity when the live Session model is incomplete', async () => {
+    const service = createService()
+    await service.setSubagentModel({ mode: 'inherit' })
+
+    await expect(
+      service.resolveSubagentExecutionModel('codex', {
+        backendId: `codex:${CODEX_RUNTIME_PROVIDER_ID}`,
+        modelRoute: 'codex-responses'
+      })
+    ).rejects.toThrow('no complete Main Agent runtime model')
+  })
+
+  it('rejects a fixed Subagent provider incompatible with the active Agent Framework', async () => {
+    const service = createService()
+    const created = await service.upsertProvider({
+      type: 'claude-isolated',
+      model: 'claude-sonnet-4-5'
+    })
+    await repository.setAgentFramework('codex')
+
+    await expect(
+      service.setSubagentModel({
+        mode: 'fixed',
+        providerId: created.providers[0].id,
+        model: 'claude-sonnet-4-5',
+        reasoningEffort: 'high'
+      })
+    ).rejects.toThrow('not available for the active Agent Framework')
+  })
+
   it('atomically validates and saves a fixed compound provider/model target', async () => {
     const service = createService()
     const created = await service.upsertProvider({
