@@ -106,7 +106,7 @@ const writeArtifactFileToolSchema = {
           content: z
             .string()
             .describe(
-              'Small in-memory text to write directly. Use localPath for files already on disk.'
+              'Small in-memory text to write directly. Use localPath for files already on disk. JavaScript callers must use String.raw for LaTeX or other backslash-heavy content; ordinary strings and template literals consume escape sequences before this tool receives them.'
             ),
           encoding: z.enum(['utf8', 'base64']).default('utf8')
         }),
@@ -366,6 +366,25 @@ const normalizeArtifactToolWriteInput = (
   return { kind: 'localPath', path: input.filename }
 }
 
+const assertInlineArtifactTextFidelity = (
+  input: ArtifactToolWriteInput,
+  source: ArtifactWriteSource
+): void => {
+  if (source.kind !== 'inline' || (source.encoding ?? 'utf8') !== 'utf8') return
+
+  const normalizedMimeType = input.mimeType?.split(';', 1)[0]?.trim().toLowerCase()
+  const isMarkdown = normalizedMimeType === 'text/markdown' || /\.md(?:own)?$/i.test(input.filename)
+  if (!isMarkdown) return
+
+  const cookedLatexControl =
+    /[\b\f\v]|\r(?!\n)|\t(?:ext|op|heta|au|imes|riangle|frac|begin|end|sum|ge|le|in|exists|mathcal)/
+  if (!cookedLatexControl.test(source.content)) return
+
+  throw new Error(
+    'Inline Markdown contains control characters consistent with LaTeX being evaluated as a cooked JavaScript string before write_artifact_file. Rebuild the content with String.raw or save an exact UTF-8 local file and pass source.kind=localPath.'
+  )
+}
+
 // Notebook workingFiles use paths relative to the session root (`data/plot.png`), while code runs
 // inside that data directory and naturally uses `plot.png`. Accept both app-owned representations.
 // The kernel-relative interpretation stays first so an explicit `data/plot.png` saved by user code
@@ -395,6 +414,7 @@ const writeArtifactFileForCurrentRun = async (
     input,
     Boolean(context.notebookDataDir || environment.allowedImportRoots[0])
   )
+  assertInlineArtifactTextFidelity(input, source)
   // A relative source normally has one authoritative base. Notebook workingFiles are the one bounded
   // exception: their `data/...` path is session-root relative, so probe the current session root after
   // the kernel cwd. Never probe additional workspace roots during a Notebook turn — that could import

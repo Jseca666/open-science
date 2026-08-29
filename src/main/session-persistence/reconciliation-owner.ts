@@ -302,6 +302,10 @@ class SessionPersistenceReconciliationOwner {
             candidateIndex === index ? persisted : candidate
           )
           result = { ...result, sessions }
+        } else {
+          // Artifact recovery can complete durable provenance without changing the renderer-facing
+          // Session projection. Snapshot completion is still required in that no-diff case.
+          await this.provenance?.captureFinalizedMessages(session)
         }
       }
       // Restore active owners before scan-order-dependent sync offers canonical rows elsewhere.

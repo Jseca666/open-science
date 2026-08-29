@@ -1,4 +1,4 @@
-import { createCodeFenceTracker } from './code-fence'
+import { FENCE_LINE, createCodeFenceTracker } from './code-fence'
 
 const quoteAxisListItems = (raw: string): string =>
   raw
@@ -182,6 +182,126 @@ const findNormalizationBoundary = (markdown: string): number => {
   return widened
 }
 
+const isUnescapedLatexDelimiter = (text: string, index: number, marker: string): boolean => {
+  if (text[index] !== '\\' || text[index + 1] !== marker) return false
+
+  let precedingBackslashes = 0
+  for (let cursor = index - 1; cursor >= 0 && text[cursor] === '\\'; cursor -= 1) {
+    precedingBackslashes += 1
+  }
+  return precedingBackslashes % 2 === 0
+}
+
+/**
+ * Converts MathJax-style delimiters to Streamdown's dollar delimiters without touching code.
+ * Unmatched delimiters are preserved verbatim so a partial streaming chunk is never corrupted.
+ */
+const normalizeLatexMathDelimiters = (markdown: string): string => {
+  if (
+    !markdown ||
+    (!markdown.includes('\\(') &&
+      !markdown.includes('\\)') &&
+      !markdown.includes('\\[') &&
+      !markdown.includes('\\]'))
+  ) {
+    return markdown
+  }
+
+  const output: string[] = []
+  const lines = markdown.match(/[^\n]*(?:\n|$)/g) ?? []
+  let inFence = false
+  let fenceMarker = ''
+  let fenceLength = 0
+  let inlineCodeTicks = 0
+  let mathState: { type: 'inline' | 'display'; openerTokenIndex: number } | null = null
+
+  for (const lineWithEnding of lines) {
+    const hasNewline = lineWithEnding.endsWith('\n')
+    const line = hasNewline ? lineWithEnding.slice(0, -1) : lineWithEnding
+    const fenceMatch = inlineCodeTicks === 0 && mathState === null ? FENCE_LINE.exec(line) : null
+
+    if (inFence) {
+      output.push(lineWithEnding)
+      if (fenceMatch) {
+        const marker = fenceMatch[1]
+        if (marker[0] === fenceMarker && marker.length >= fenceLength) {
+          inFence = false
+          fenceMarker = ''
+          fenceLength = 0
+        }
+      }
+      continue
+    }
+
+    if (fenceMatch) {
+      const marker = fenceMatch[1]
+      inFence = true
+      fenceMarker = marker[0]
+      fenceLength = marker.length
+      output.push(lineWithEnding)
+      continue
+    }
+
+    for (let index = 0; index < line.length;) {
+      const character = line[index]
+      if (mathState !== null) {
+        const closeMarker = mathState.type === 'inline' ? ')' : ']'
+        if (isUnescapedLatexDelimiter(line, index, closeMarker)) {
+          const replacement = mathState.type === 'inline' ? '$' : '$$'
+          output[mathState.openerTokenIndex] = replacement
+          output.push(replacement)
+          mathState = null
+          index += 2
+        } else {
+          output.push(character)
+          index += 1
+        }
+        continue
+      }
+
+      if (character === '`') {
+        let tickCount = 1
+        while (index + tickCount < line.length && line[index + tickCount] === '`') tickCount += 1
+        if (inlineCodeTicks === 0) {
+          inlineCodeTicks = tickCount
+        } else if (tickCount === inlineCodeTicks) {
+          inlineCodeTicks = 0
+        }
+        output.push(line.slice(index, index + tickCount))
+        index += tickCount
+        continue
+      }
+
+      if (inlineCodeTicks !== 0) {
+        output.push(character)
+        index += 1
+        continue
+      }
+
+      if (
+        isUnescapedLatexDelimiter(line, index, '(') ||
+        isUnescapedLatexDelimiter(line, index, '[')
+      ) {
+        mathState = {
+          type: line[index + 1] === '(' ? 'inline' : 'display',
+          openerTokenIndex: output.length
+        }
+        output.push(line.slice(index, index + 2))
+        index += 2
+        continue
+      }
+
+      output.push(character)
+      index += 1
+    }
+
+    if (mathState?.type === 'inline') mathState = null
+    if (hasNewline) output.push('\n')
+  }
+
+  return output.join('')
+}
+
 /**
  * Incremental `normalizeAgentMarkdown` for append-only streaming. Caches the last input/output
  * and, when the new input only appends to it, re-normalizes just from a safe boundary (the last
@@ -194,6 +314,8 @@ const createAgentMarkdownNormalizer = (): ((markdown: string) => string) => {
   let boundary = 0
   // Invariant: boundaryOutput === normalizeAgentMarkdown(cachedInput.slice(0, boundary)).
   let boundaryOutput = ''
+  const normalizeRenderedMarkdown = (markdown: string): string =>
+    normalizeAgentMarkdown(normalizeLatexMathDelimiters(markdown))
 
   return (markdown: string): string => {
     if (markdown === cachedInput) return cachedOutput
@@ -202,14 +324,14 @@ const createAgentMarkdownNormalizer = (): ((markdown: string) => string) => {
 
     const output =
       appendFrom === -1
-        ? normalizeAgentMarkdown(markdown)
-        : boundaryOutput + normalizeAgentMarkdown(markdown.slice(appendFrom))
+        ? normalizeRenderedMarkdown(markdown)
+        : boundaryOutput + normalizeRenderedMarkdown(markdown.slice(appendFrom))
 
     const nextBoundary = findNormalizationBoundary(markdown)
     if (appendFrom !== -1 && nextBoundary >= appendFrom) {
       // Extend the cached prefix without re-normalizing it; both split points are safe.
       boundaryOutput =
-        boundaryOutput + normalizeAgentMarkdown(markdown.slice(appendFrom, nextBoundary))
+        boundaryOutput + normalizeRenderedMarkdown(markdown.slice(appendFrom, nextBoundary))
       boundary = nextBoundary
     } else {
       // No safe prefix to carry over; the next append re-normalizes everything once.
@@ -227,5 +349,6 @@ export {
   createAgentMarkdownNormalizer,
   normalizeAgentMarkdown,
   normalizeGfmAlerts,
+  normalizeLatexMathDelimiters,
   normalizeMermaidChart
 }

@@ -8,7 +8,8 @@ import {
 } from '../../shared/session-persistence'
 import {
   getActiveConversationContext,
-  resolveActiveConversationMessages
+  resolveActiveConversationMessages,
+  type PersistedConversationGraph
 } from '../../shared/conversation-graph'
 import type { ReviewerAcpRuntime } from './acp-runtime'
 import { ReviewerCorrectionOwner } from './correction'
@@ -31,6 +32,25 @@ const runReviewMutation = <Result>(
 ): Promise<Result> => (runner ? runner(mutation) : mutation())
 
 const SESSION_REFRESH_POLL_MS = 50
+
+const bindNewApplicationTurnToActiveRuntimeSegment = (
+  graph: PersistedConversationGraph,
+  inheritedContext: ReturnType<typeof getActiveConversationContext>
+): ReturnType<typeof getActiveConversationContext> => {
+  const activeFrame = graph.frames.find((candidate) => candidate.id === graph.activeFrameId)
+  if (!activeFrame || activeFrame.id !== inheritedContext.agentFrameId) {
+    throw new Error('Application turn provenance does not match the active Agent Frame.')
+  }
+
+  const activeRuntimeSegment = graph.runtimeSegments
+    .filter((candidate) => candidate.agentFrameId === activeFrame.id)
+    .at(-1)
+  if (!activeRuntimeSegment) {
+    throw new Error('Application turn has no active Runtime Segment.')
+  }
+
+  return { ...inheritedContext, runtimeSegmentId: activeRuntimeSegment.id }
+}
 
 // Options for the Phase 3 fix loop.
 type ReviewerFixLoopOptions = {
@@ -213,9 +233,13 @@ export const runReviewerFixLoop = async (options: ReviewerFixLoopOptions): Promi
           'The active conversation has no complete user prompt for correction provenance.'
         )
       }
-      const provenanceContext = getActiveConversationContext(
+      const inheritedProvenanceContext = getActiveConversationContext(
         conversationGraph,
         originatingPrompt.id
+      )
+      const provenanceContext = bindNewApplicationTurnToActiveRuntimeSegment(
+        conversationGraph,
+        inheritedProvenanceContext
       )
       const correctionResult = await correctionOwner.request({
         projectId,
