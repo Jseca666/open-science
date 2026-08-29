@@ -18,6 +18,7 @@ import { defaultVendorModel } from '../../shared/provider-registry'
 import {
   CLAUDE_ISOLATED_PROVIDER_ID,
   CLAUDE_SHARED_PROVIDER_ID,
+  CODEX_ISOLATED_PROVIDER_ID as CODEX_RUNTIME_PROVIDER_ID,
   CODEX_SUBSCRIPTION_PROVIDER_ID,
   type ClaudeDetectResult
 } from '../../shared/settings'
@@ -5360,6 +5361,48 @@ describe('SettingsService: Subagent model', () => {
       modelRoute: 'claude-anthropic',
       model: 'subagent-model',
       reasoningEffort: 'xhigh'
+    })
+  })
+
+  it('resolves an inherited Codex subscription runtime alias through its canonical provider', async () => {
+    const adapterPath = join(storageRoot, 'bin', 'codex-acp')
+    await mkdir(dirname(adapterPath), { recursive: true })
+    await writeFile(adapterPath, MANAGED_CODEX_ADAPTER_FIXTURE, 'utf8')
+    await chmod(adapterPath, 0o755)
+    const service = createService(undefined, {
+      codexDetected: { path: adapterPath, version: 'codex-acp 1.6.2' }
+    })
+    await repository.setCodexInfo({
+      resolvedPath: adapterPath,
+      version: '1.6.2',
+      nativePath: '/data/codex-managed/native/codex',
+      nativeVersion: '0.144.6'
+    })
+    await repository.setAgentFramework('codex')
+    await repository.upsertProvider({
+      id: CODEX_SUBSCRIPTION_PROVIDER_ID,
+      type: 'codex-isolated',
+      name: 'Codex subscription',
+      apiEndpoints: ['responses'],
+      lastValidatedAt: 100
+    })
+    await service.setActiveProvider(CODEX_SUBSCRIPTION_PROVIDER_ID, 'gpt-5.6-sol')
+    await service.setSubagentModel({ mode: 'inherit' })
+
+    await expect(
+      service.resolveSubagentExecutionModel('codex', {
+        backendId: `codex:${CODEX_RUNTIME_PROVIDER_ID}`,
+        modelRoute: 'codex-responses',
+        model: 'gpt-5.6-sol',
+        reasoningEffort: 'ultra'
+      })
+    ).resolves.toEqual({
+      frameworkId: 'codex',
+      providerId: CODEX_SUBSCRIPTION_PROVIDER_ID,
+      backendId: `codex:${CODEX_RUNTIME_PROVIDER_ID}`,
+      modelRoute: 'codex-responses',
+      model: 'gpt-5.6-sol',
+      reasoningEffort: 'ultra'
     })
   })
 
