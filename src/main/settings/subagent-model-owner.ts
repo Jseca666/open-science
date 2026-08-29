@@ -1,4 +1,7 @@
-import type { SubagentModelConfiguration } from '../../shared/settings'
+import {
+  canonicalSessionProviderId,
+  type SubagentModelConfiguration
+} from '../../shared/settings'
 import type { ResolvedSubagentModelSnapshot } from '../../shared/session-persistence'
 import type { ResolvedReasoningEffort } from '../../shared/reasoning-effort'
 import { createDelegateExecutionBackendLease } from '../delegation/execution-backend-lease'
@@ -74,7 +77,7 @@ class SubagentModelOwner {
     if (configuration.mode === 'inherit') {
       const prefix = `${frameworkId}:`
       const providerId = inherited.backendId?.startsWith(prefix)
-        ? inherited.backendId.slice(prefix.length)
+        ? canonicalSessionProviderId(inherited.backendId.slice(prefix.length))
         : undefined
       if (!providerId || !inherited.backendId || !inherited.modelRoute || !inherited.model) {
         throw new Error('The originating Session has no complete Main Agent runtime model.')
