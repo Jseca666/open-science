@@ -12,6 +12,7 @@ const BUFFERED_TEXT_TOOL_LAYOUT_SHIFT_PROMPT =
 const AGENT_STDERR_SUMMARY = 'Agent process stderr: 1 chunk, 22 bytes; raw output omitted.'
 
 test.use({ windowMode: 'normal' })
+test.describe.configure({ mode: 'serial' })
 
 const cases = [
   { name: 'without agent status', prompt: TOOL_LAYOUT_SHIFT_PROMPT, agentStatus: undefined },

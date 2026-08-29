@@ -1659,6 +1659,70 @@ describe('renderer session persistence bridge', () => {
     })
   })
 
+  it('rebases a first user prompt over Session-details admission and activeRun timestamps', async () => {
+    const promptContent = 'Summarize the deterministic fixture.'
+    const base = materializeSessionConversationGraph(
+      createPersistedSession({
+        projectId: 'project-a',
+        revision: 8,
+        status: 'idle',
+        title: 'New conversation',
+        messages: []
+      })
+    )
+    useSessionStore.getState().hydrateSessions([base])
+    const baseline = useSessionStore.getState()
+    const appended = useSessionStore.getState().appendUserMessage({
+      sessionId: base.id,
+      content: promptContent,
+      projectId: 'project-a'
+    })
+    if (!appended) throw new Error('Expected the first user Message to be appended.')
+
+    const submitted = toPersistedSession(
+      useSessionStore.getState().sessions.find((session) => session.id === base.id)!
+    )
+    const queuedDetails = materializeSessionConversationGraph({
+      ...submitted,
+      revision: 9,
+      title: promptContent,
+      description: 'The user wants a concise summary of the deterministic fixture.',
+      sessionDetailsSource: 'fallback' as const,
+      sessionDetailsGeneration: {
+        status: 'queued' as const,
+        sourceMessageId: appended.messageId,
+        requestId: `${appended.messageId}:session-details`,
+        queuedAt: 3
+      },
+      activeRun: {
+        promptMessageId: appended.messageId,
+        startedAt: (submitted.activeRun?.startedAt ?? 0) + 5_000
+      },
+      updatedAt: submitted.updatedAt + 1
+    })
+    const saveSession = vi
+      .fn<SessionPersistenceApi['saveSession']>()
+      .mockRejectedValueOnce(new SessionRevisionConflictError(8, 9))
+      .mockImplementationOnce(async (submitted) => ({ ...submitted, revision: 10 }))
+    const api = createApi({
+      loadOne: vi.fn().mockResolvedValueOnce(queuedDetails),
+      saveSession
+    })
+    const save = createStoreSaver(api, baseline)
+
+    await expect(save(useSessionStore.getState())).resolves.toBeUndefined()
+
+    expect(api.loadOne).toHaveBeenCalledOnce()
+    expect(saveSession).toHaveBeenCalledTimes(2)
+    expect(saveSession.mock.calls[1][0]).toMatchObject({
+      revision: 9,
+      status: 'running',
+      sessionDetailsGeneration: { status: 'queued' },
+      messages: [expect.objectContaining({ content: promptContent })]
+    })
+    expect(saveSession.mock.calls[1][0].activeRun?.promptMessageId).toBe(appended.messageId)
+  })
+
   it('stops rebasing when Main authority keeps advancing past the bounded retry window', async () => {
     const base = materializeSessionConversationGraph(
       createPersistedSession({ projectId: 'project-a', revision: 1 })

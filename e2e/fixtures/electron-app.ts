@@ -519,6 +519,10 @@ class ElectronAppHarness implements ElectronApp {
     // Specs assert English copy. Pin the locale so the host language can't leak in — Main
     // resolves a 'system' preference from the OS language list, ignoring Chromium's --lang.
     settings.localePreference = 'en'
+    // Inherit would spawn a second fake Agent just to generate the Session title. That extra
+    // process and its queued/running/terminal Session writes overlap the first user turn on
+    // Windows CI and leave the conversation stuck on Thinking.
+    settings.sessionDetailsModel = { mode: 'disabled' }
     await writeFile(settingsPath, `${JSON.stringify(settings, null, 2)}\n`, 'utf8')
     await this.launch()
     return this.page

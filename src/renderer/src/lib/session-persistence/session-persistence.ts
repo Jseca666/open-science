@@ -130,7 +130,9 @@ const MAIN_OWNED_SESSION_FIELDS = new Set<keyof PersistedChatSession>([
   'enabledComputeHosts',
   'selectedComputeHosts',
   'specialistId',
-  'specialistBindingPending'
+  'specialistBindingPending',
+  // Live ACP updates this snapshot independently of the renderer transcript save.
+  'contextUsage'
 ])
 
 const MAIN_OWNED_SESSION_DETAILS_FIELDS = new Set<keyof PersistedChatSession>([
@@ -466,6 +468,19 @@ const rebaseSessionAfterRevisionConflict = (
         )
         if (!graph) return undefined
         rebased.conversationGraph = graph
+      } else if (key === 'activeRun') {
+        const submittedRun = submittedValue as PersistedChatSession['activeRun']
+        const latestRun = latestValue as PersistedChatSession['activeRun']
+        if (!submittedRun) continue
+        if (!latestRun) {
+          rebased.activeRun = structuredClone(submittedRun)
+          continue
+        }
+        if (submittedRun.promptMessageId !== latestRun.promptMessageId) return undefined
+        rebased.activeRun = {
+          promptMessageId: submittedRun.promptMessageId,
+          startedAt: Math.min(submittedRun.startedAt, latestRun.startedAt)
+        }
       } else {
         return undefined
       }
