@@ -265,6 +265,11 @@ const openMainWindow = async (
     )
     .toBe('ready')
   await page.getByText('Loading settings...').waitFor({ state: 'hidden', timeout: 60_000 })
+  // The workspace GitHub star nudge opens after 5s in a visible window and is not part of these
+  // journeys. Record the cooldown in this profile so it cannot cover Send or shift layout.
+  await page.evaluate(() => {
+    window.localStorage.setItem('open-science:github-star-nudge-last-shown-at', String(Date.now()))
+  })
   return page
 }
 

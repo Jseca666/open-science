@@ -32,6 +32,7 @@ const runLayoutStabilityJourney = async (
 ): Promise<void> => {
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
+  await page.emulateMedia({ reducedMotion: 'reduce' })
 
   await page.getByRole('button', { name: 'New project' }).click()
   const dialog = page.getByRole('dialog', { name: 'New project' })
@@ -46,6 +47,7 @@ const runLayoutStabilityJourney = async (
   await textbox.fill(USER_MESSAGE)
   await sendButton.click()
   await expect(conversation.getByText(AGENT_REPLY, { exact: true })).toBeVisible()
+  await expect(page.getByTestId('session-persistence-alert')).toHaveCount(0)
 
   await textbox.fill(prompt)
   await sendButton.click()
@@ -100,6 +102,7 @@ test('keeps a running tool stationary while one line of buffered Markdown finish
 }) => {
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
+  await page.emulateMedia({ reducedMotion: 'reduce' })
 
   await page.getByRole('button', { name: 'New project' }).click()
   const dialog = page.getByRole('dialog', { name: 'New project' })
@@ -113,6 +116,7 @@ test('keeps a running tool stationary while one line of buffered Markdown finish
   await textbox.fill(USER_MESSAGE)
   await page.getByRole('button', { name: 'Send message' }).click()
   await expect(conversation.getByText(AGENT_REPLY, { exact: true })).toBeVisible()
+  await expect(page.getByTestId('session-persistence-alert')).toHaveCount(0)
 
   await textbox.fill(BUFFERED_TEXT_TOOL_LAYOUT_SHIFT_PROMPT)
   await page.getByRole('button', { name: 'Send message' }).click()

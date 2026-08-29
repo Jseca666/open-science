@@ -499,10 +499,11 @@ const rebaseSessionAfterRevisionConflict = (
   return rebased
 }
 
-// Session details can legitimately advance through queued, running, and terminal Main-owned
-// revisions while a renderer transcript save is in flight. Rebase each observed authority in
-// sequence, but keep a hard cap so a genuinely active second writer cannot livelock persistence.
-const MAX_SESSION_REVISION_REBASE_ATTEMPTS = 3
+// A first-turn renderer transcript save can overlap several legitimate Main-owned advances:
+// Session details queued/running/terminal, Session status, runtime context, and auxiliary usage.
+// Rebase each newly observed authority in sequence. Keep a hard cap so a genuine second writer
+// cannot livelock persistence.
+const MAX_SESSION_REVISION_REBASE_ATTEMPTS = 8
 
 const saveAfterSessionRevisionConflict = async (
   initialError: unknown,
@@ -1712,6 +1713,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
 }
 
 export {
+  MAX_SESSION_REVISION_REBASE_ATTEMPTS,
   createOrderedSessionPersistence,
   createStoreSaver,
   flushSessionPersistence,
