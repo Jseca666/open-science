@@ -3140,6 +3140,49 @@ describe('SessionPersistenceCoordinator', () => {
     expect(fileIndex.reconcileActiveSessions).toHaveBeenCalledWith([session])
   })
 
+  it('captures finalized Message snapshots when Artifact recovery changes no Session projection', async () => {
+    const session = materializeSessionConversationGraph(
+      createSession({
+        messages: [
+          {
+            id: 'message-1',
+            role: 'agent',
+            content: 'already attached result',
+            status: 'complete',
+            eventIds: [],
+            createdAt: 1,
+            updatedAt: 2
+          }
+        ]
+      })
+    )
+    const result = { sessions: [session], manifest: { version: 1 as const } }
+    const repository = createSessionRepository({
+      loadAllWithDiagnostics: vi.fn().mockResolvedValue({ result, isComplete: true })
+    })
+    const fileIndex = createFileIndex()
+    const provenance = createProvenancePersistence()
+    const artifactStorage = {
+      prepareProjectReconciliation: vi
+        .fn()
+        .mockResolvedValue(createProjectReconciliationSnapshot()),
+      reconcileSession: vi.fn().mockResolvedValue(undefined)
+    }
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      fileIndex,
+      undefined,
+      provenance,
+      undefined,
+      artifactStorage
+    )
+
+    await coordinator.loadAll()
+
+    expect(provenance.captureFinalizedMessages).toHaveBeenCalledWith(session)
+    expect(repository.saveSession).not.toHaveBeenCalled()
+  })
+
   it('keeps cleanup closed across scans after quarantining corrupt Session authority', async () => {
     const root = await mkdtemp(join(tmpdir(), 'open-science-corrupt-session-reconciliation-'))
     const projectDir = join(root, 'sessions', 'project-1')

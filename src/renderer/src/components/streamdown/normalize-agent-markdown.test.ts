@@ -4,6 +4,7 @@ import {
   createAgentMarkdownNormalizer,
   normalizeAgentMarkdown,
   normalizeGfmAlerts,
+  normalizeLatexMathDelimiters,
   normalizeMermaidChart
 } from './normalize-agent-markdown'
 
@@ -47,6 +48,34 @@ xychart-beta
 
     expect(output).toContain('title "Monthly sales"')
     expect(output).toContain('<aside data-agent-alert="tip">')
+  })
+})
+
+describe('normalizeLatexMathDelimiters', () => {
+  it.each([
+    ['inline math', 'before \\(x^2 + \\text{A}\\) after', 'before $x^2 + \\text{A}$ after'],
+    ['display math', '\\[\n\\boxed{\\text{A}}\n\\]', '$$\n\\boxed{\\text{A}}\n$$'],
+    ['fenced code', '```tex\n\\[x\\]\n```', '```tex\n\\[x\\]\n```'],
+    ['tilde-fenced code', '~~~tex\n\\(x\\)\n~~~', '~~~tex\n\\(x\\)\n~~~'],
+    ['inline code', 'code `\\(x\\)` and math \\(y\\)', 'code `\\(x\\)` and math $y$'],
+    [
+      'multi-backtick inline code',
+      'code ``\\[x\\]`` and math \\[y\\]',
+      'code ``\\[x\\]`` and math $$y$$'
+    ],
+    [
+      'existing dollar math',
+      'inline $x$ and display\n$$\ny\n$$',
+      'inline $x$ and display\n$$\ny\n$$'
+    ],
+    ['escaped literals', 'literal \\\\(not math\\\\)', 'literal \\\\(not math\\\\)'],
+    ['unmatched inline opener', 'unfinished \\(x', 'unfinished \\(x'],
+    ['unmatched inline closer', 'unfinished x\\)', 'unfinished x\\)'],
+    ['unmatched display opener', '\\[\nx', '\\[\nx'],
+    ['ordinary bracket lines', '[\nplain list content\n]', '[\nplain list content\n]'],
+    ['multiple formulas', '\\(a\\), \\(b\\), and \\[c\\]', '$a$, $b$, and $$c$$']
+  ])('normalizes %s without changing protected text', (_name, input, expected) => {
+    expect(normalizeLatexMathDelimiters(input)).toBe(expected)
   })
 })
 

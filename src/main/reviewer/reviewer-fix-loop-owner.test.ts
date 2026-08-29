@@ -8,26 +8,41 @@ import type { NewCheck, ReviewCheck, ReviewWithChecks } from '../../shared/revie
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import type { ReviewRepository } from './repository'
 
-const mocks = vi.hoisted(() => ({
-  sendApplicationPrompt: vi.fn(),
-  runReviewAssessment: vi.fn(),
-  getActiveConversationContext: vi.fn((_graph: unknown, promptMessageId: string) => ({
-    promptMessageId
-  })),
-  resolveActiveConversationMessages: vi.fn(() => [
-    {
-      id: 'originating-user',
-      role: 'user',
-      status: 'complete'
-    }
-  ])
-}))
+const mocks = vi.hoisted(() => {
+  const conversationGraph = {
+    activeFrameId: 'root-frame',
+    frames: [{ id: 'root-frame' }],
+    runtimeSegments: [
+      { id: 'runtime-old', agentFrameId: 'root-frame', startedAt: 1, endedAt: 2 },
+      { id: 'runtime-current', agentFrameId: 'root-frame', startedAt: 2 }
+    ]
+  }
+  return {
+    conversationGraph,
+    sendApplicationPrompt: vi.fn(),
+    runReviewAssessment: vi.fn(),
+    getActiveConversationContext: vi.fn((_graph: unknown, promptMessageId: string) => ({
+      rootFrameId: 'root-frame',
+      agentFrameId: 'root-frame',
+      messageBranchId: 'main-branch',
+      runtimeSegmentId: 'runtime-old',
+      promptMessageId
+    })),
+    resolveActiveConversationMessages: vi.fn(() => [
+      {
+        id: 'originating-user',
+        role: 'user',
+        status: 'complete'
+      }
+    ])
+  }
+})
 
 vi.mock('./review-assessment-owner', () => ({
   runReviewAssessment: mocks.runReviewAssessment
 }))
 vi.mock('../../shared/session-persistence', () => ({
-  materializeSessionConversationGraph: () => ({ conversationGraph: {} })
+  materializeSessionConversationGraph: () => ({ conversationGraph: mocks.conversationGraph })
 }))
 vi.mock('../../shared/conversation-graph', () => ({
   getActiveConversationContext: mocks.getActiveConversationContext,
@@ -125,7 +140,13 @@ describe('reviewer fix-loop owner', () => {
     mocks.runReviewAssessment.mockReset()
     mocks.getActiveConversationContext
       .mockReset()
-      .mockImplementation((_graph: unknown, promptMessageId: string) => ({ promptMessageId }))
+      .mockImplementation((_graph: unknown, promptMessageId: string) => ({
+        rootFrameId: 'root-frame',
+        agentFrameId: 'root-frame',
+        messageBranchId: 'main-branch',
+        runtimeSegmentId: 'runtime-old',
+        promptMessageId
+      }))
     mocks.resolveActiveConversationMessages.mockReset().mockReturnValue([
       {
         id: 'originating-user',
@@ -180,7 +201,16 @@ describe('reviewer fix-loop owner', () => {
       })
     )
     expect(getSession).toHaveBeenCalledTimes(2)
-    expect(mocks.getActiveConversationContext).toHaveBeenCalledWith({}, 'originating-user')
+    expect(mocks.getActiveConversationContext).toHaveBeenCalledWith(
+      mocks.conversationGraph,
+      'originating-user'
+    )
+    expect(mocks.sendApplicationPrompt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provenanceContext: expect.objectContaining({ runtimeSegmentId: 'runtime-current' })
+      }),
+      expect.anything()
+    )
     expect(repository.commitFindingDispositions).not.toHaveBeenCalled()
   })
 
