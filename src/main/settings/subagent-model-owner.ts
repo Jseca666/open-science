@@ -1,7 +1,4 @@
-import {
-  canonicalSessionProviderId,
-  type SubagentModelConfiguration
-} from '../../shared/settings'
+import { canonicalSessionProviderId, type SubagentModelConfiguration } from '../../shared/settings'
 import type { ResolvedSubagentModelSnapshot } from '../../shared/session-persistence'
 import type { ResolvedReasoningEffort } from '../../shared/reasoning-effort'
 import { createDelegateExecutionBackendLease } from '../delegation/execution-backend-lease'
