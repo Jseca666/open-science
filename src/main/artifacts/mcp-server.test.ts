@@ -47,6 +47,35 @@ afterEach(async () => {
 })
 
 describe('artifact MCP server', () => {
+  it('rejects Markdown whose LaTeX was corrupted by a cooked JavaScript string', async () => {
+    const root = await createStorageRoot()
+    const repository = new ArtifactRepository(root)
+    const environment = await createEnvironment(root)
+    const corrupted = '[\nmathcal Y = d' + '\t' + 'ext-rooted and eta^' + '\t' + 'op x\n]'
+
+    await expect(
+      writeArtifactFileForCurrentRun(repository, environment, {
+        filename: 'formula.md',
+        mimeType: 'text/markdown',
+        source: { kind: 'inline', encoding: 'utf8', content: corrupted }
+      })
+    ).rejects.toThrow(/cooked JavaScript string/)
+
+    await expect(
+      writeArtifactFileForCurrentRun(repository, environment, {
+        filename: 'formula.md',
+        mimeType: 'text/markdown',
+        source: {
+          kind: 'inline',
+          encoding: 'utf8',
+          content: String.raw`$$
+\boxed{\text{A}} + \rho + \nu_{d,B}(S)
+$$`
+        }
+      })
+    ).resolves.toMatchObject({ name: 'formula.md', mimeType: 'text/markdown' })
+  })
+
   it('keeps legacy content and encoding input working for the current run', async () => {
     const root = await createStorageRoot()
     const repository = new ArtifactRepository(root)
